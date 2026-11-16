@@ -1,0 +1,17 @@
+services:
+  review-hub:
+    build: .
+    container_name: code-review-hub
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data          # H2 数据库持久化
+    environment:
+      - REVIEW_WORKERS=2          # 并发评审线程数（review.workers）
+      # - SERVER_PORT=8080       # 服务端口（server.port）
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/reviews/stats >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

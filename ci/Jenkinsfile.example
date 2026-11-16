@@ -1,0 +1,101 @@
+// ============================================================
+// CodeReview Hub - Jenkinsfile 集成示例
+//
+// 前提：
+//   1. 将本仓库的 ci/submit-review.sh 提交到你的业务仓库
+//   2. Jenkins 节点具备 bash / git / curl / python3
+//   3. 在 Jenkins 凭据中添加 Secret Text（可选，平台配置了接入密钥时使用）
+// ============================================================
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    environment {
+        // CodeReview Hub 服务地址
+        REVIEW_HUB = 'http://review-hub.internal:8080'
+        // 接入密钥（在 系统设置-安全 中配置的值；未配置密钥可删除此行）
+        REVIEW_API_KEY = credentials('review-hub-api-key')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                // 确保有基线分支用于计算 diff
+                sh 'git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master || true'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo '业务构建步骤…（按需替换）'
+                // sh 'mvn -B package -DskipTests'
+            }
+        }
+
+        stage('AI Code Review') {
+            steps {
+                sh '''
+                bash ci/submit-review.sh \
+                  --hub "$REVIEW_HUB" \
+                  --api-key "$REVIEW_API_KEY" \
+                  --repo "$JOB_BASE_NAME" \
+                  --base origin/master \
+                  --with-files
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            when { expression { currentBuild.result == null } }
+            steps {
+                echo '业务部署步骤…（仅当评审通过才会执行到这里）'
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo '流水线失败：可能是构建错误，或 AI 评审门禁未通过，查看评审详情定位问题'
+        }
+    }
+}
+
+// ============================================================
+// 备选：不想在仓库中放置脚本时，可用纯 curl 的极简 stage：
+//
+// stage('AI Code Review') {
+//     steps {
+//         script {
+//             def diff = sh(script: 'git diff origin/master...HEAD', returnStdout: true)
+//             def payload = groovy.json.JsonOutput.toJson(
+//                 [repoName: env.JOB_BASE_NAME, branch: env.GIT_BRANCH,
+//                  author: 'jenkins', source: 'JENKINS', diff: diff])
+//             def resp = sh(returnStdout: true, script:
+//                 """curl -s -X POST ${REVIEW_HUB}/api/jenkins/submit \
+//                    -H 'Content-Type: application/json' -H "X-API-Key: ${REVIEW_API_KEY}" \
+//                    --data-binary '${payload.replace("'", "'\\''")}'""").trim()
+//             def id = new groovy.json.JsonSlurper().parseText(resp).id
+//             // 轮询直到完成
+//             def status = 'QUEUED'
+//             while (status in ['QUEUED', 'RUNNING']) {
+//                 sleep 5
+//                 def s = sh(returnStdout: true, script:
+//                     "curl -s ${REVIEW_HUB}/api/jenkins/reviews/${id}").trim()
+//                 status = new groovy.json.JsonSlurper().parseText(s).status
+//             }
+//             def gate = new groovy.json.JsonSlurper().parseText(
+//                 sh(returnStdout: true, script:
+//                     "curl -s ${REVIEW_HUB}/api/jenkins/reviews/${id}/gate").trim())
+//             if (!gate.pass) {
+//                 error("AI 评审门禁未通过: ${gate.reason} 详情: ${REVIEW_HUB}/#/reviews/${id}")
+//             }
+//         }
+//     }
+// }
+// ============================================================
