@@ -74,6 +74,10 @@ const I = {
     check: svg('<path d="M4.5 12.5l5 5 10-11"/>'),
     alert: svg('<path d="M12 4l9.5 16.5h-19z"/><path d="M12 10.5v4"/><circle cx="12" cy="17.3" r=".4"/>'),
     info: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".4"/>'),
+    search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M15.9 15.9L20.5 20.5"/>'),
+    spark: svg('<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18.5 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>'),
+    flow: svg('<rect x="3.5" y="4" width="7" height="5.5" rx="1.5"/><rect x="13.5" y="14.5" width="7" height="5.5" rx="1.5"/><path d="M7 9.5v4a3 3 0 0 0 3 3h3.5"/>'),
+    lock: svg('<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/><circle cx="12" cy="15.2" r=".4"/>'),
     file: svg('<path d="M13 3.5H6.5a1.5 1.5 0 0 0-1.5 1.5v14a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M13 3.5V9h5.5"/>'),
     clock: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2.5"/>'),
     trash: svg('<path d="M4.5 6.5h15"/><path d="M8 6.5V5a1.5 1.5 0 0 1 1.5-1.5h5A1.5 1.5 0 0 1 16 5v1.5"/><path d="M6.5 6.5l1 13a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5-1.4l1-13"/>'),
@@ -232,29 +236,66 @@ const Switch = {
 const LoginPage = {
     template: `
   <div class="login-wrap">
-    <div class="login-card">
-      <div class="login-logo">
+    <div class="login-hero">
+      <div class="hero-brand">
         <div class="logo-mark">CR</div>
         <div>
-          <div class="login-title">CodeReview Hub</div>
-          <div class="login-sub">AI 代码评审平台</div>
+          <div class="hero-name">CodeReview Hub</div>
+          <div class="hero-sub">AI 代码评审平台</div>
         </div>
       </div>
-      <div class="login-expired" v-if="expired">登录已过期或已在别处失效，请重新登录</div>
-      <form @submit.prevent="doLogin">
-        <div class="field">
-          <label>用户名</label>
-          <input type="text" v-model="username" placeholder="请输入用户名" autocomplete="username">
+      <div class="hero-body">
+        <h1 class="hero-title">让每一次提交<br>都经过 AI 评审</h1>
+        <p class="hero-desc">确定性流程 + LLM 智能体的混合架构：diff 解析、规则路由、行号定位由代码保证可靠，代码质量的判断交给大模型。</p>
+        <ul class="hero-feats">
+          <li><span class="feat-ic" v-html="IC.spark"></span><div><b>LLM 智能体评审</b><span>模型自主读取代码上下文，输出定位到行的结构化发现</span></div></li>
+          <li><span class="feat-ic" v-html="IC.flow"></span><div><b>Jenkins 流水线集成</b><span>作为 stage 自动触发评审，质量门禁按严重级别拦截</span></div></li>
+          <li><span class="feat-ic" v-html="IC.lock"></span><div><b>私有大模型</b><span>兼容 vLLM / Ollama / OneAPI，代码数据不出内网</span></div></li>
+          <li><span class="feat-ic" v-html="IC.settings"></span><div><b>规则与技能可配置</b><span>Web 页面自定义评审规则与智能体人格</span></div></li>
+        </ul>
+        <div class="hero-demo">
+          <div class="demo-card demo-main">
+            <div class="demo-head">
+              <span class="badge sev-MAJOR">主要</span>
+              <span class="demo-loc">OrderService.java:42</span>
+              <span class="demo-score">78</span>
+            </div>
+            <div class="demo-msg">空指针风险：查询结果未判空，直接调用 .getUserId()</div>
+            <div class="demo-diff"><span class="dl del">- Long uid = find(id).getUserId();</span><span class="dl add">+ Long uid = find(id).map(u -&gt; u.getUserId()).orElse(null);</span></div>
+          </div>
+          <div class="demo-card demo-float">
+            <span class="demo-ftitle">质量门禁</span>
+            <span class="demo-fval"><span class="ok-dot"></span>通过 · 无严重及以上问题</span>
+          </div>
         </div>
-        <div class="field">
-          <label>密码</label>
-          <input type="password" v-model="password" placeholder="请输入密码" autocomplete="current-password">
+      </div>
+      <div class="hero-foot">CodeReview Hub v1.0.0 · 基于 open-code-review 设计理念</div>
+    </div>
+    <div class="login-panel">
+      <div class="login-card">
+        <div class="login-logo">
+          <div class="logo-mark">CR</div>
+          <div>
+            <div class="login-title">CodeReview Hub</div>
+            <div class="login-sub">AI 代码评审平台</div>
+          </div>
         </div>
-        <button type="submit" class="btn primary login-btn" :disabled="loading || !username || !password">
-          {{ loading ? '登录中…' : '登  录' }}
-        </button>
-      </form>
-      <div class="login-hint">默认管理员：admin / admin123（登录后请尽快修改密码）</div>
+        <div class="login-expired" v-if="expired">登录已过期或已在别处失效，请重新登录</div>
+        <form @submit.prevent="doLogin">
+          <div class="field">
+            <label>用户名</label>
+            <input type="text" v-model="username" placeholder="请输入用户名" autocomplete="username">
+          </div>
+          <div class="field">
+            <label>密码</label>
+            <input type="password" v-model="password" placeholder="请输入密码" autocomplete="current-password">
+          </div>
+          <button type="submit" class="btn primary login-btn" :disabled="loading || !username || !password">
+            {{ loading ? '登录中…' : '登  录' }}
+          </button>
+        </form>
+        <div class="login-hint">默认管理员：admin / admin123（登录后请尽快修改密码）</div>
+      </div>
     </div>
   </div>`,
     setup() {
@@ -291,7 +332,7 @@ const LoginPage = {
             }
         }
 
-        return { username, password, loading, expired, doLogin };
+        return { username, password, loading, expired, doLogin, IC: I };
     },
 };
 
@@ -335,14 +376,20 @@ const DashboardPage = {
     <section class="card">
       <div class="table-toolbar">
         <div class="filters">
-          <select v-model="filter.status" @change="reload" style="width:130px">
+          <div class="search-box">
+            <span class="sb-ic" v-html="IC.search"></span>
+            <input v-model="filter.q" placeholder="搜索仓库 / 分支 / 作者" @keyup.enter="reload">
+            <button type="button" class="sb-clear" v-if="filter.q" @click="clearQ" v-html="IC.close" title="清空"></button>
+          </div>
+          <select v-model="filter.status" @change="reload" class="status-sel">
             <option value="">全部状态</option>
             <option v-for="(l, k) in ST_LABEL" :key="k" :value="k">{{ l }}</option>
           </select>
-          <input v-model="filter.q" placeholder="搜索仓库 / 分支 / 作者，回车" style="width:230px" @keyup.enter="reload">
-          <button class="btn ghost sm" @click="reload">搜索</button>
         </div>
-        <button class="icon-btn" @click="reload" v-html="IC.refresh" title="刷新"></button>
+        <div class="filters">
+          <span class="result-count" v-if="total">共 {{ total }} 条结果</span>
+          <button class="icon-btn" @click="reload" v-html="IC.refresh" title="刷新"></button>
+        </div>
       </div>
 
       <table class="tbl" v-if="rows.length">
@@ -389,10 +436,21 @@ const DashboardPage = {
         <p>点击右上角「手动提交评审」，或在 Jenkins 流水线中接入</p>
       </div>
 
-      <div class="pager" v-if="total > size">
-        <button class="btn ghost sm" :disabled="page === 0" @click="page--; load()">上一页</button>
-        <span>{{ page + 1 }} / {{ Math.ceil(total / size) }}</span>
-        <button class="btn ghost sm" :disabled="(page + 1) * size >= total" @click="page++; load()">下一页</button>
+      <div class="pager" v-if="total > pageSize">
+        <span class="pg-info">共 {{ total }} 条 · 第 {{ page + 1 }} / {{ totalPages }} 页</span>
+        <div class="pg-btns">
+          <button :disabled="page === 0" @click="gotoPage(0)" title="首页">«</button>
+          <button :disabled="page === 0" @click="gotoPage(page - 1)" title="上一页">‹</button>
+          <button v-for="(p, i) in pageButtons" :key="i" :class="{ on: p === page }"
+                  :disabled="p < 0" @click="gotoPage(p)">{{ p < 0 ? '…' : p + 1 }}</button>
+          <button :disabled="page >= totalPages - 1" @click="gotoPage(page + 1)" title="下一页">›</button>
+          <button :disabled="page >= totalPages - 1" @click="gotoPage(totalPages - 1)" title="末页">»</button>
+        </div>
+        <select v-model.number="pageSize" @change="reload" class="size-sel">
+          <option :value="15">15 条/页</option>
+          <option :value="30">30 条/页</option>
+          <option :value="50">50 条/页</option>
+        </select>
       </div>
     </section>
 
@@ -430,11 +488,35 @@ const DashboardPage = {
         const loading = ref(false);
         const filter = reactive({ status: '', q: '' });
         const page = ref(0);
-        const size = 15;
+        const pageSize = ref(15);
         const total = ref(0);
         const showSubmit = ref(false);
         const submitting = ref(false);
         const form = reactive({ repoName: '', branch: '', author: '', diff: '' });
+
+        const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
+        /** 页码按钮序列（-1 表示省略号），当前页附近 + 首末页 */
+        const pageButtons = computed(() => {
+            const tp = totalPages.value, cur = page.value;
+            if (tp <= 7) return Array.from({ length: tp }, (_, i) => i);
+            const set = new Set([0, tp - 1, cur, cur - 1, cur + 1]);
+            if (cur <= 3) [1, 2, 3, 4].forEach(i => set.add(i));
+            if (cur >= tp - 4) [tp - 5, tp - 4, tp - 3, tp - 2].forEach(i => set.add(i));
+            const arr = [...set].filter(i => i >= 0 && i < tp).sort((a, b) => a - b);
+            const out = [];
+            arr.forEach((n, i) => {
+                if (i > 0 && n - arr[i - 1] > 1) out.push(-1);
+                out.push(n);
+            });
+            return out;
+        });
+
+        function gotoPage(p) {
+            if (p < 0 || p >= totalPages.value || p === page.value) return;
+            page.value = p;
+            load();
+        }
+        function clearQ() { filter.q = ''; reload(); }
 
         async function load() {
             loading.value = true;
@@ -443,7 +525,7 @@ const DashboardPage = {
                 if (filter.status) p.set('status', filter.status);
                 if (filter.q) p.set('q', filter.q);
                 p.set('page', page.value);
-                p.set('size', size);
+                p.set('size', pageSize.value);
                 const res = await api.get('/api/reviews?' + p.toString());
                 rows.value = res.content;
                 total.value = res.totalElements;
@@ -486,8 +568,9 @@ const DashboardPage = {
         onUnmounted(() => clearInterval(timer));
 
         return {
-            stats, rows, loading, filter, page, size, total, showSubmit, submitting, form,
-            load, reload, go, sevN, submit, IC: I, ST_LABEL, SRC_LABEL, fmtTime,
+            stats, rows, loading, filter, page, pageSize, total, totalPages, pageButtons,
+            showSubmit, submitting, form,
+            load, reload, go, gotoPage, clearQ, sevN, submit, IC: I, ST_LABEL, SRC_LABEL, fmtTime,
         };
     },
 };
