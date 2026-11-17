@@ -40,6 +40,7 @@ public class AuthController {
 
     @PostMapping("/change-password")
     public Map<String, String> changePassword(@RequestAttribute("currentUser") User user,
+                                              @RequestHeader("X-Auth-Token") String token,
                                               @Valid @RequestBody AuthDtos.ChangePasswordRequest req) {
         if (!user.getPassword().equalsIgnoreCase(AuthService.md5(req.oldPassword()))) {
             throw new IllegalArgumentException("原密码不正确");
@@ -49,6 +50,7 @@ public class AuthController {
         }
         user.setPassword(AuthService.md5(req.newPassword()));
         auth.save(user);
+        auth.revokeOtherSessions(user.getId(), token); // 其他设备强制重新登录，当前会话保留
         return Map.of("ok", "true");
     }
 

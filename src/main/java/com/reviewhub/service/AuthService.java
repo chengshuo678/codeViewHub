@@ -89,4 +89,10 @@ public class AuthService {
     public void revokeUserSessions(Long userId) {
         sessions.entrySet().removeIf(e -> e.getValue().userId().equals(userId));
     }
+
+    /** 撤销该用户除当前 token 外的全部会话（修改密码后其他设备强制下线，当前会话保留） */
+    public void revokeOtherSessions(Long userId, String keepToken) {
+        sessions.entrySet().removeIf(e -> e.getValue().userId().equals(userId)
+                && (keepToken == null || !e.getKey().equals(keepToken)));
+    }
 }

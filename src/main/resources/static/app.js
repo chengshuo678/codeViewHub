@@ -26,6 +26,13 @@ const api = {
         let data = null;
         try { data = await resp.json(); } catch (e) { /* ignore */ }
         if (resp.status === 401 && !url.includes('/api/auth/login')) {
+            // 会话失效：记录当前位置（登录后跳回），清理状态 → 根组件自动切换到登录页
+            if (auth.token) {
+                try {
+                    sessionStorage.setItem('crh_redirect', location.hash || '#/');
+                    sessionStorage.setItem('crh_expired', '1');
+                } catch (e) { /* ignore */ }
+            }
             saveAuth('', null);
             throw new Error((data && data.error) || '未登录或会话已过期，请重新登录');
         }
@@ -233,6 +240,7 @@ const LoginPage = {
           <div class="login-sub">AI 代码评审平台</div>
         </div>
       </div>
+      <div class="login-expired" v-if="expired">登录已过期或已在别处失效，请重新登录</div>
       <form @submit.prevent="doLogin">
         <div class="field">
           <label>用户名</label>
@@ -253,6 +261,13 @@ const LoginPage = {
         const username = ref('');
         const password = ref('');
         const loading = ref(false);
+        const expired = ref(false);
+        try {
+            if (sessionStorage.getItem('crh_expired') === '1') {
+                expired.value = true;
+                sessionStorage.removeItem('crh_expired');
+            }
+        } catch (e) { /* ignore */ }
 
         async function doLogin() {
             loading.value = true;
@@ -261,8 +276,14 @@ const LoginPage = {
                     username: username.value.trim(), password: password.value,
                 });
                 saveAuth(res.token, res.user);
+                // 恢复会话失效前的页面（无记录则回首页）
+                let target = '#/';
+                try {
+                    target = sessionStorage.getItem('crh_redirect') || '#/';
+                    sessionStorage.removeItem('crh_redirect');
+                } catch (e) { /* ignore */ }
+                if (location.hash !== target) location.hash = target;
                 toast('欢迎回来，' + (res.user.displayName || res.user.username), 'success');
-                location.hash = '#/';
             } catch (e) {
                 toast(e.message);
             } finally {
@@ -270,7 +291,7 @@ const LoginPage = {
             }
         }
 
-        return { username, password, loading, doLogin };
+        return { username, password, loading, expired, doLogin };
     },
 };
 
@@ -1472,6 +1493,22 @@ const App = {
                 }
             }
             booting.value = false;
+        });
+
+        // 会话主动探测：页面重新可见/获得焦点时节流校验一次，
+        // 挂机期间会话过期（24h）或被管理员重置时，无需任何操作即自动跳回登录页
+        let lastProbe = 0;
+        async function probeSession() {
+            if (!auth.token || document.visibilityState !== 'visible') return;
+            if (Date.now() - lastProbe < 60 * 1000) return;
+            lastProbe = Date.now();
+            try { auth.user = await api.get('/api/auth/me'); } catch (e) { /* 401 已自动跳登录页 */ }
+        }
+        document.addEventListener('visibilitychange', probeSession);
+        window.addEventListener('focus', probeSession);
+        onUnmounted(() => {
+            document.removeEventListener('visibilitychange', probeSession);
+            window.removeEventListener('focus', probeSession);
         });
 
         function openChangePw() {
