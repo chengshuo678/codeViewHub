@@ -47,7 +47,16 @@ REVIEW_WORKERS=4 \
 java -jar code-review-hub.jar
 ```
 
-### 2.3 systemd 托管（生产）
+### 2.3 首次登录与账号安全
+
+服务首次启动时会自动创建默认管理员（仅当用户表为空时）：
+
+- 用户名 `admin`，初始密码 `admin123`，角色 ADMIN
+- 启动日志会提示：`已创建默认管理员账号 admin（初始密码 admin123，请尽快修改）`
+
+**上线前必做**：用该账号登录后立即「修改密码」。密码以 **MD5 密文**存储（`app_user.password` 列），数据库与界面中均无明文。会话 token 有效期 24 小时（滑动续期）；重置密码 / 禁用 / 降权会使目标用户全部会话立即失效。
+
+### 2.4 systemd 托管（生产）
 
 `/etc/systemd/system/code-review-hub.service`：
 
@@ -161,6 +170,11 @@ docker run -d --name review-hub \
 
 **Q: 忘记了接入密钥？**
 数据库 `app_setting` 表中 `security.apiKey` 即为密钥；或清空该行即关闭鉴权。
+
+**Q: 忘记了管理员密码？**
+两种恢复方式：
+1. 用另一个管理员账号登录，在「用户管理」中重置该账号密码
+2. 停止服务，用 H2 控制台（或直接改库）将 `app_user` 表中对应用户的 `password` 更新为新密码的 MD5 值（32 位小写十六进制），例如 `echo -n "newpass123" | md5`（macOS：`md5 -qs "newpass123"`），重启后用新密码登录
 
 **Q: 如何查看数据库？**
 启动后访问 `http://<host>:8080/h2-console`，JDBC URL 填 `jdbc:h2:file:./data/review-hub`，用户名 `sa`，密码空。

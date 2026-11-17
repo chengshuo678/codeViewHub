@@ -30,6 +30,7 @@
 | 特性 | 说明 |
 |------|------|
 | 服务端部署 | Java 17 + Spring Boot 3 单 JAR，内嵌 H2 数据库，零外部依赖 |
+| 登录与角色管理 | 登录页 + 会话鉴权（token 24h 滑动续期）；管理员/普通用户两种角色；密码 **MD5 密文存储**，支持修改与重置（重置/禁用后强制下线） |
 | Jenkins 集成 | 提供专用 API 与 `ci/submit-review.sh`，可作为流水线 stage，支持质量门禁（按严重级别决定是否放行） |
 | 私有大模型 | 兼容 OpenAI Chat Completions 协议（vLLM / Ollama / OneAPI / DashScope 兼容模式等），Web 页面在线配置与连通性测试 |
 | 异步排队评审 | 内存队列 + 可配置并发 worker，提交即返回，服务重启自动恢复未完成任务，支持 callback 回调 |
@@ -57,7 +58,7 @@ REVIEW_WORKERS=4 java -jar code-review-hub.jar
 
 ### 3. 访问
 
-浏览器打开 <http://localhost:8080>
+浏览器打开 <http://localhost:8080>，使用默认管理员账号登录：**admin / admin123**（首次登录后请立即修改密码）
 
 - 首次启动自带 **3 个技能、14 条规则**，模型提供者默认为 **Mock**（无需配置即可体验）
 - 接入真实私有大模型：**系统设置 → 大模型连接**，填入 Base URL 与模型名，点「测试连接」
@@ -72,8 +73,8 @@ docker compose up -d
 
 | 文档 | 内容 |
 |------|------|
-| [部署文档](docs/deployment.md) | 环境要求、JAR/Docker/systemd 部署、全部配置项、私有大模型接入、备份与升级 |
-| [使用文档](docs/usage.md) | Web 页面使用、Jenkins 集成完整示例、REST API 参考、质量门禁规则 |
+| [部署文档](docs/deployment.md) | 环境要求、JAR/Docker/systemd 部署、默认账号与密码安全、全部配置项、私有大模型接入、备份与升级 |
+| [使用文档](docs/usage.md) | 登录与角色权限矩阵、Web 页面使用、用户管理、Jenkins 集成完整示例、REST API 参考 |
 
 ## 目录结构
 
@@ -86,7 +87,7 @@ code-review-hub/
 │   ├── deployment.md           # 部署文档
 │   └── usage.md                # 使用文档
 ├── src/main/java/com/reviewhub/
-│   ├── api/                    # REST 控制器（评审/规则/技能/设置/Jenkins）
+│   ├── api/                    # REST 控制器（认证/用户/评审/规则/技能/设置/Jenkins）
 │   ├── boot/                   # 种子数据
 │   ├── domain/                 # 实体与枚举
 │   ├── engine/                 # 评审引擎核心

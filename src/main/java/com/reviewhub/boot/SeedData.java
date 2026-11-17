@@ -3,10 +3,13 @@ package com.reviewhub.boot;
 import com.reviewhub.domain.ReviewRule;
 import com.reviewhub.domain.ReviewSkill;
 import com.reviewhub.domain.Severity;
+import com.reviewhub.domain.User;
 import com.reviewhub.repo.AppSettingRepository;
 import com.reviewhub.repo.ReviewRuleRepository;
 import com.reviewhub.repo.ReviewSkillRepository;
 import com.reviewhub.domain.AppSetting;
+import com.reviewhub.repo.UserRepository;
+import com.reviewhub.service.AuthService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -16,7 +19,7 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 /**
- * 内置种子数据：技能、规则、默认配置。
+ * 内置种子数据：管理员账号、技能、规则、默认配置。
  * 仅在缺失时插入，不会覆盖用户在 Web 页面上的修改。
  */
 @Component
@@ -27,18 +30,35 @@ public class SeedData implements ApplicationRunner {
     private final ReviewSkillRepository skills;
     private final ReviewRuleRepository rules;
     private final AppSettingRepository settings;
+    private final UserRepository users;
 
-    public SeedData(ReviewSkillRepository skills, ReviewRuleRepository rules, AppSettingRepository settings) {
+    public SeedData(ReviewSkillRepository skills, ReviewRuleRepository rules,
+                    AppSettingRepository settings, UserRepository users) {
         this.skills = skills;
         this.rules = rules;
         this.settings = settings;
+        this.users = users;
     }
 
     @Override
     public void run(ApplicationArguments args) {
+        seedAdmin();
         seedSettings();
         seedSkills();
         seedRules();
+    }
+
+    /** 默认管理员：admin / admin123（MD5 密文存储），请登录后尽快修改密码 */
+    private void seedAdmin() {
+        if (users.count() > 0) return;
+        User admin = new User();
+        admin.setUsername("admin");
+        admin.setPassword(AuthService.md5("admin123"));
+        admin.setDisplayName("系统管理员");
+        admin.setRole(com.reviewhub.domain.Role.ADMIN);
+        admin.setEnabled(true);
+        users.save(admin);
+        log.info("已创建默认管理员账号 admin（初始密码 admin123，请尽快修改）");
     }
 
     private void seedSettings() {

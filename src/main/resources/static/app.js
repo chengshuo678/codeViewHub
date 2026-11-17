@@ -3,10 +3,21 @@
  * ============================================================ */
 const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
 
+/* ---------------- 认证状态 ---------------- */
+const auth = reactive({ token: localStorage.getItem('crh_token') || '', user: null });
+
+function saveAuth(token, user) {
+    auth.token = token || '';
+    auth.user = user || null;
+    if (auth.token) localStorage.setItem('crh_token', auth.token);
+    else localStorage.removeItem('crh_token');
+}
+
 /* ---------------- API 封装 ---------------- */
 const api = {
     async request(method, url, body) {
         const opt = { method, headers: {} };
+        if (auth.token) opt.headers['X-Auth-Token'] = auth.token;
         if (body !== undefined) {
             opt.headers['Content-Type'] = 'application/json';
             opt.body = JSON.stringify(body);
@@ -14,6 +25,10 @@ const api = {
         const resp = await fetch(url, opt);
         let data = null;
         try { data = await resp.json(); } catch (e) { /* ignore */ }
+        if (resp.status === 401 && !url.includes('/api/auth/login')) {
+            saveAuth('', null);
+            throw new Error((data && data.error) || '未登录或会话已过期，请重新登录');
+        }
         if (!resp.ok) throw new Error((data && data.error) || ('请求失败 HTTP ' + resp.status));
         return data;
     },
@@ -61,6 +76,9 @@ const I = {
     user: svg('<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c1.2-3.4 4-5 7.5-5s6.3 1.6 7.5 5"/>'),
     branch: svg('<circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 3.4-3 4-6 4.6"/>'),
     zap: svg('<path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/>'),
+    users: svg('<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19.5c1-3 3-4.5 5.5-4.5s4.5 1.5 5.5 4.5"/><circle cx="17" cy="9.5" r="2.5"/><path d="M15.5 14.6c2.6.2 4.3 1.6 5 4.4"/>'),
+    logout: svg('<path d="M14 4H7a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 7 20h7"/><path d="M10 12h10"/><path d="M17 8.5L20.5 12 17 15.5"/>'),
+    key: svg('<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8"/><path d="M16 4l4 4"/><path d="M14 6l4 4"/>'),
 };
 
 /* ---------------- 元数据 ---------------- */
@@ -166,6 +184,7 @@ function parseHash() {
     if (parts[0] === 'reviews' && parts[1]) { route.name = 'review-detail'; route.params = { id: parts[1] }; }
     else if (parts[0] === 'rules') route.name = 'rules';
     else if (parts[0] === 'skills') route.name = 'skills';
+    else if (parts[0] === 'users') route.name = 'users';
     else if (parts[0] === 'settings') route.name = 'settings';
     else { route.name = 'dashboard'; route.params = {}; }
 }
@@ -198,6 +217,61 @@ const Switch = {
       <span class="track"></span>
       <span class="sw-label" v-if="label">{{ label }}</span>
     </label>`,
+};
+
+/* ============================================================
+ * 登录页
+ * ============================================================ */
+const LoginPage = {
+    template: `
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="logo-mark">CR</div>
+        <div>
+          <div class="login-title">CodeReview Hub</div>
+          <div class="login-sub">AI 代码评审平台</div>
+        </div>
+      </div>
+      <form @submit.prevent="doLogin">
+        <div class="field">
+          <label>用户名</label>
+          <input type="text" v-model="username" placeholder="请输入用户名" autocomplete="username">
+        </div>
+        <div class="field">
+          <label>密码</label>
+          <input type="password" v-model="password" placeholder="请输入密码" autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn primary login-btn" :disabled="loading || !username || !password">
+          {{ loading ? '登录中…' : '登  录' }}
+        </button>
+      </form>
+      <div class="login-hint">默认管理员：admin / admin123（登录后请尽快修改密码）</div>
+    </div>
+  </div>`,
+    setup() {
+        const username = ref('');
+        const password = ref('');
+        const loading = ref(false);
+
+        async function doLogin() {
+            loading.value = true;
+            try {
+                const res = await api.request('POST', '/api/auth/login', {
+                    username: username.value.trim(), password: password.value,
+                });
+                saveAuth(res.token, res.user);
+                toast('欢迎回来，' + (res.user.displayName || res.user.username), 'success');
+                location.hash = '#/';
+            } catch (e) {
+                toast(e.message);
+            } finally {
+                loading.value = false;
+            }
+        }
+
+        return { username, password, loading, doLogin };
+    },
 };
 
 /* ============================================================
@@ -1117,11 +1191,180 @@ const SettingsPage = {
 };
 
 /* ============================================================
- * 根组件
+ * 用户管理（仅管理员）
+ * ============================================================ */
+const UsersPage = {
+    template: `
+  <div class="page">
+    <header class="page-head">
+      <div>
+        <h1>用户管理</h1>
+        <p class="sub">平台账号与角色权限管理，密码以 MD5 密文存储</p>
+      </div>
+      <button class="btn primary" @click="openCreate"><span v-html="IC.plus"></span>新建用户</button>
+    </header>
+
+    <div class="notice"><span v-html="IC.info"></span>
+      <span>管理员可管理规则、技能、系统设置与用户；普通用户可查看评审结果并标记问题状态与备注。重置密码或禁用账号后，该用户会被强制下线。</span>
+    </div>
+
+    <section class="card">
+      <table class="tbl" v-if="rows.length">
+        <thead>
+          <tr>
+            <th>用户名</th><th>显示名</th><th style="width:100px">角色</th>
+            <th style="width:80px">状态</th><th style="width:150px">创建时间</th><th style="width:150px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="u in rows" :key="u.id">
+            <td>
+              <b>{{ u.username }}</b>
+              <span v-if="u.id === me.id" class="builtin-tag" style="margin-left:6px">当前账号</span>
+            </td>
+            <td style="color:var(--muted)">{{ u.displayName || '—' }}</td>
+            <td><span class="badge" :class="'role-' + u.role">{{ u.roleLabel }}</span></td>
+            <td><toggle-switch :model-value="u.enabled" @update:model-value="v => toggle(u, v)"></toggle-switch></td>
+            <td style="color:var(--muted);font-size:12.5px">{{ fmtTime(u.createdAt) }}</td>
+            <td>
+              <div style="display:flex;gap:2px">
+                <button class="icon-btn" @click="openEdit(u)" v-html="IC.edit" title="编辑"></button>
+                <button class="icon-btn" @click="openReset(u)" v-html="IC.key" title="重置密码"></button>
+                <button class="icon-btn" v-if="u.id !== me.id" @click="del(u)" v-html="IC.trash" title="删除"></button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="empty"><h4>暂无用户</h4></div>
+    </section>
+
+    <modal v-if="editing" :title="form.id ? '编辑用户' : '新建用户'" @close="editing = false">
+      <div class="form-row">
+        <div class="field">
+          <label>用户名 <span class="req" v-if="!form.id">*</span></label>
+          <input type="text" v-model="form.username" :disabled="!!form.id" placeholder="登录账号">
+        </div>
+        <div class="field">
+          <label>显示名</label>
+          <input type="text" v-model="form.displayName" placeholder="例如：张三">
+        </div>
+      </div>
+      <div class="field" v-if="!form.id">
+        <label>初始密码 <span class="req">*</span></label>
+        <input type="password" v-model="form.password" placeholder="6-100 位" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>角色</label>
+        <select v-model="form.role">
+          <option value="USER">普通用户（查看评审、标记问题）</option>
+          <option value="ADMIN">管理员（全部权限）</option>
+        </select>
+      </div>
+      <div class="field" v-if="form.id">
+        <toggle-switch :model-value="form.enabled" @update:model-value="v => form.enabled = v" label="启用账号"></toggle-switch>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" @click="editing = false">取消</button>
+        <button class="btn primary" :disabled="!form.username || (!form.id && !form.password)" @click="save">保存</button>
+      </div>
+    </modal>
+
+    <modal v-if="resetting" :title="'重置密码：' + resetUser.username" @close="resetting = false">
+      <div class="field">
+        <label>新密码 <span class="req">*</span></label>
+        <input type="password" v-model="newPassword" placeholder="6-100 位" autocomplete="new-password">
+        <div class="hint">重置后该用户的全部登录会话将失效，需用新密码重新登录</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" @click="resetting = false">取消</button>
+        <button class="btn primary" :disabled="!newPassword || newPassword.length < 6" @click="doReset">确认重置</button>
+      </div>
+    </modal>
+  </div>`,
+    setup() {
+        const rows = ref([]);
+        const editing = ref(false);
+        const resetting = ref(false);
+        const resetUser = ref(null);
+        const newPassword = ref('');
+        const form = reactive({ id: null, username: '', displayName: '', password: '', role: 'USER', enabled: true });
+
+        const me = computed(() => auth.user || { id: -1 });
+
+        async function load() {
+            try { rows.value = await api.get('/api/users'); } catch (e) { toast(e.message); }
+        }
+        function openCreate() {
+            Object.assign(form, { id: null, username: '', displayName: '', password: '', role: 'USER', enabled: true });
+            editing.value = true;
+        }
+        function openEdit(u) {
+            Object.assign(form, { id: u.id, username: u.username, displayName: u.displayName || '', password: '', role: u.role, enabled: u.enabled });
+            editing.value = true;
+        }
+        function openReset(u) {
+            resetUser.value = u;
+            newPassword.value = '';
+            resetting.value = true;
+        }
+        async function save() {
+            try {
+                if (form.id) {
+                    await api.put('/api/users/' + form.id, { displayName: form.displayName, role: form.role, enabled: form.enabled });
+                } else {
+                    await api.post('/api/users', { username: form.username.trim(), password: form.password, displayName: form.displayName, role: form.role });
+                }
+                toast('用户已保存', 'success');
+                editing.value = false;
+                load();
+            } catch (e) { toast(e.message); }
+        }
+        async function doReset() {
+            try {
+                await api.put('/api/users/' + resetUser.value.id + '/reset-password', { newPassword: newPassword.value });
+                toast('已重置 ' + resetUser.value.username + ' 的密码', 'success');
+                resetting.value = false;
+            } catch (e) { toast(e.message); }
+        }
+        async function toggle(u, v) {
+            try {
+                await api.put('/api/users/' + u.id, { displayName: u.displayName, role: u.role, enabled: v });
+                u.enabled = v;
+            } catch (e) { toast(e.message); }
+        }
+        async function del(u) {
+            if (!confirm('确认删除用户「' + u.username + '」？')) return;
+            try {
+                await api.del('/api/users/' + u.id);
+                toast('已删除', 'success');
+                load();
+            } catch (e) { toast(e.message); }
+        }
+        onMounted(load);
+        return { rows, editing, resetting, resetUser, newPassword, form, me, openCreate, openEdit, openReset, save, doReset, toggle, del, IC: I, fmtTime };
+    },
+};
+
+/* ---------------- 无权限提示 ---------------- */
+const NoPerm = {
+    template: `
+  <div class="page">
+    <div class="empty">
+      <div class="empty-ic" v-html="IC.alert"></div>
+      <h4>无访问权限</h4>
+      <p>该页面仅管理员可见，请联系管理员开通权限</p>
+    </div>
+  </div>`,
+    data() { return { IC: I }; },
+};
+
+/* ============================================================
+ * 根组件（登录门卫 + 布局）
  * ============================================================ */
 const App = {
     template: `
-  <div class="layout">
+  <div class="layout" v-if="auth.user">
     <aside class="sidebar">
       <div class="logo">
         <div class="logo-mark">CR</div>
@@ -1131,41 +1374,140 @@ const App = {
         </div>
       </div>
       <nav>
-        <a v-for="n in navs" :key="n.name" :href="'#/' + n.hash" :class="{ active: route.name === n.name }">
+        <a v-for="n in visibleNavs" :key="n.name" :href="'#/' + n.hash" :class="{ active: route.name === n.name }">
           <span class="nav-ic" v-html="n.icon"></span>{{ n.label }}
         </a>
       </nav>
-      <div class="sidebar-foot"><span class="dot"></span>v1.0.0 · 服务运行中</div>
+      <div class="sidebar-foot">
+        <div class="user-zone">
+          <div class="user-menu" v-if="menuOpen">
+            <a @click="openChangePw"><span v-html="IC.key"></span>修改密码</a>
+            <a @click="doLogout"><span v-html="IC.logout"></span>退出登录</a>
+          </div>
+          <div class="user-chip" @click="menuOpen = !menuOpen">
+            <span class="user-ava">{{ avatarChar }}</span>
+            <div class="user-meta">
+              <div class="user-name">{{ auth.user.displayName || auth.user.username }}</div>
+              <div class="user-role">{{ auth.user.roleLabel }}</div>
+            </div>
+            <span class="user-caret">▲</span>
+          </div>
+          <div class="ver-line"><span class="dot"></span>v1.0.0 · 服务运行中</div>
+        </div>
+      </div>
     </aside>
     <main class="main">
       <component :is="view"></component>
     </main>
+
+    <modal v-if="showChangePw" title="修改密码" @close="showChangePw = false">
+      <div class="field">
+        <label>原密码 <span class="req">*</span></label>
+        <input type="password" v-model="pw.old" autocomplete="current-password">
+      </div>
+      <div class="field">
+        <label>新密码 <span class="req">*</span></label>
+        <input type="password" v-model="pw.neo" placeholder="6-100 位" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>确认新密码 <span class="req">*</span></label>
+        <input type="password" v-model="pw.repeat" autocomplete="new-password">
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" @click="showChangePw = false">取消</button>
+        <button class="btn primary" :disabled="!pw.old || !pw.neo || pw.neo.length < 6" @click="submitChangePw">保存</button>
+      </div>
+    </modal>
   </div>
+
+  <login-page v-else-if="!booting"></login-page>
+  <div v-else class="boot-splash"><div class="spinner"></div></div>
+
   <div class="toasts">
     <div class="toast" v-for="t in toastState.list" :key="t.id" :class="t.type">
       <span v-html="t.type === 'success' ? IC.check : IC.alert"></span>{{ t.msg }}
     </div>
   </div>`,
     setup() {
+        const booting = ref(true);
+        const menuOpen = ref(false);
+        const showChangePw = ref(false);
+        const pw = reactive({ old: '', neo: '', repeat: '' });
+
         const navs = [
             { name: 'dashboard', hash: '', label: '仪表盘', icon: I.dashboard },
-            { name: 'rules', hash: 'rules', label: '评审规则', icon: I.rules },
-            { name: 'skills', hash: 'skills', label: '评审技能', icon: I.skills },
-            { name: 'settings', hash: 'settings', label: '系统设置', icon: I.settings },
+            { name: 'rules', hash: 'rules', label: '评审规则', icon: I.rules, admin: true },
+            { name: 'skills', hash: 'skills', label: '评审技能', icon: I.skills, admin: true },
+            { name: 'users', hash: 'users', label: '用户管理', icon: I.users, admin: true },
+            { name: 'settings', hash: 'settings', label: '系统设置', icon: I.settings, admin: true },
         ];
         const views = {
             'dashboard': DashboardPage,
             'review-detail': ReviewDetailPage,
             'rules': RulesPage,
             'skills': SkillsPage,
+            'users': UsersPage,
             'settings': SettingsPage,
         };
-        const view = computed(() => views[route.name] || DashboardPage);
-        return { navs, view, route, toastState, IC: I };
+        const ADMIN_ONLY = ['rules', 'skills', 'users', 'settings'];
+
+        const visibleNavs = computed(() =>
+            navs.filter(n => !n.admin || (auth.user && auth.user.role === 'ADMIN')));
+        const view = computed(() => {
+            if (!auth.user) return LoginPage;
+            if (ADMIN_ONLY.includes(route.name) && auth.user.role !== 'ADMIN') return NoPerm;
+            return views[route.name] || DashboardPage;
+        });
+        const avatarChar = computed(() => {
+            const s = auth.user ? (auth.user.displayName || auth.user.username || '?') : '?';
+            return s.trim().charAt(0).toUpperCase();
+        });
+
+        onMounted(async () => {
+            if (auth.token) {
+                try {
+                    auth.user = await api.get('/api/auth/me');
+                } catch (e) {
+                    /* 401 时已清理会话，展示登录页 */
+                }
+            }
+            booting.value = false;
+        });
+
+        function openChangePw() {
+            menuOpen.value = false;
+            pw.old = ''; pw.neo = ''; pw.repeat = '';
+            showChangePw.value = true;
+        }
+        async function submitChangePw() {
+            if (pw.neo !== pw.repeat) {
+                toast('两次输入的新密码不一致');
+                return;
+            }
+            try {
+                await api.post('/api/auth/change-password', { oldPassword: pw.old, newPassword: pw.neo });
+                toast('密码已修改', 'success');
+                showChangePw.value = false;
+            } catch (e) { toast(e.message); }
+        }
+        async function doLogout() {
+            menuOpen.value = false;
+            try { await api.post('/api/auth/logout'); } catch (e) { /* 忽略 */ }
+            saveAuth('', null);
+            location.hash = '#/';
+            toast('已退出登录', 'success');
+        }
+
+        return {
+            auth, booting, menuOpen, showChangePw, pw,
+            visibleNavs, view, avatarChar, route, toastState,
+            openChangePw, submitChangePw, doLogout, IC: I,
+        };
     },
 };
 
 const app = createApp(App);
 app.component('modal', Modal);
 app.component('toggle-switch', Switch);
+app.component('login-page', LoginPage);
 app.mount('#app');
