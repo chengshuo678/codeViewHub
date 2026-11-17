@@ -206,9 +206,52 @@ sudo firewall-cmd --permanent --add-port=8080/tcp && sudo firewall-cmd --reload
 - **升级版本**：外网重新 build + save → 内网 `docker load` → `docker rm -f code-review-hub` → 用新镜像 tag 重跑第三步命令；保留 `/data/code-review-hub` 目录即保留全部评审数据
 - **备份**：只需备份 `/data/code-review-hub` 目录（H2 数据库文件）
 
-## 4. 配置项说明
+## 4. 方式三：自带 JDK 部署包（内网无 Docker，适用麒麟 V10 aarch64）
 
-### 4.1 启动配置（application.yml / 环境变量，修改后需重启）
+针对内网 Linux（尤其信创环境，如银河麒麟 ky10 aarch64）提供**免安装 Java、免 Docker** 的部署包：aarch64 版 JDK 17 与应用 JAR 一起打包，解压即用。
+
+### 4.1 构建部署包（外网机器执行）
+
+项目已内置 `package.sh`、`start.sh`、`stop.sh` 与 aarch64 JDK（`lib/jdk-17.0.21+9`，Temurin Linux aarch64 版）：
+
+```bash
+./package.sh
+# 产物: dist/code-review-hub-linux-aarch64.tar.gz（约 240MB）
+```
+
+若 lib/ 下没有 JDK，从镜像下载解压后再打包：
+
+```bash
+curl -LO https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jdk/aarch64/linux/OpenJDK17U-jdk_aarch64_linux_hotspot_17.0.21_9.tar.gz
+mkdir -p lib && tar xzf OpenJDK17U-*.tar.gz -C lib/
+```
+
+> x86_64 内网机器同理：下载 `x86_64/linux/` 下的 JDK 解压到 lib/，重新执行 `./package.sh`。
+
+### 4.2 内网机器部署
+
+```bash
+tar xzf code-review-hub-linux-aarch64.tar.gz
+cd code-review-hub-linux-aarch64
+
+./start.sh     # 启动：自动探测 lib/jdk-*，无需安装 Java；脚本会等待 HTTP 就绪
+./stop.sh      # 优雅停止（15 秒超时后强制结束）
+```
+
+| 常用操作 | 命令 |
+|----------|------|
+| 覆盖端口/并发 | `SERVER_PORT=9090 REVIEW_WORKERS=4 ./start.sh` |
+| 调整 JVM 内存 | `JAVA_OPTS="-Xms1g -Xmx2g" ./start.sh` |
+| 查看日志 | `tail -f logs/app.log` |
+| 重启 | `./stop.sh && ./start.sh` |
+
+- 首次启动自动创建 admin/admin123，登录后立即修改密码
+- 目录说明：`data/`（H2 数据库，升级保留即数据不丢）、`logs/app.log`（运行日志）、`app.pid`（进程号）
+- 升级版本：用新包中的 `code-review-hub.jar` 替换旧文件后重启即可
+
+## 5. 配置项说明
+
+### 5.1 启动配置（application.yml / 环境变量，修改后需重启）
 
 | 配置项 | 环境变量 | 默认值 | 说明 |
 |--------|----------|--------|------|
@@ -216,7 +259,7 @@ sudo firewall-cmd --permanent --add-port=8080/tcp && sudo firewall-cmd --reload
 | `review.workers` | `REVIEW_WORKERS` | 2 | 并发评审线程数，即同时评审的任务数 |
 | `spring.datasource.url` | `SPRING_DATASOURCE_URL` | `jdbc:h2:file:./data/review-hub` | H2 数据库文件位置 |
 
-### 4.2 运行时配置（Web「系统设置」页，保存即生效，无需重启）
+### 5.2 运行时配置（Web「系统设置」页，保存即生效，无需重启）
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
@@ -231,7 +274,7 @@ sudo firewall-cmd --permanent --add-port=8080/tcp && sudo firewall-cmd --reload
 | `review.gateSeverity` | CRITICAL | 质量门禁阈值：该级别及以上问题将阻断流水线 |
 | `security.apiKey` | （空） | Jenkins 接入密钥，配置后 `/api/jenkins/**` 必须携带 `X-API-Key` 请求头 |
 
-## 5. 接入私有大模型
+## 6. 接入私有大模型
 
 平台兼容一切 **OpenAI Chat Completions** 协议端点。常见私有大模型部署方式的接入示例：
 
@@ -246,20 +289,20 @@ sudo firewall-cmd --permanent --add-port=8080/tcp && sudo firewall-cmd --reload
 
 > 模型能力建议：优先选择支持 **Function Calling（工具调用）** 的模型（如 Qwen2.5-Instruct 系列），可获得完整 Agent 评审能力；不支持工具调用的模型会自动降级为纯 diff 评审模式，依然可用。
 
-## 6. 数据存储与备份
+## 7. 数据存储与备份
 
 - 数据保存在 H2 文件数据库：`<工作目录>/data/review-hub.mv.db`
 - **备份**：停止服务后拷贝整个 `data/` 目录即可（或使用 H2 的 `BACKUP TO 'xx.zip'` SQL）
 - **恢复**：将备份的 `data/` 目录放回工作目录后启动
 - 容量预估：单次评审（含 diff 与文件包）约占 10KB~2MB，10 万次评审约 20~50GB，超大规模时联系管理员归档历史任务
 
-## 7. 升级
+## 8. 升级
 
 1. 备份 `data/` 目录
 2. 替换 JAR（或重新 `docker compose build`）
 3. 重启服务——Hibernate 自动执行 schema 升级，内置种子数据仅在缺失时补插，**不会覆盖**你在 Web 页面上的任何配置修改
 
-## 8. 常见问题
+## 9. 常见问题
 
 **Q: 启动报端口占用？**
 `SERVER_PORT=9090 java -jar code-review-hub.jar` 换端口。

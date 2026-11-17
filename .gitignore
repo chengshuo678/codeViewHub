@@ -5,3 +5,9 @@ data/
 .idea/
 *.iml
 .vscode/
+
+# 部署包相关（JDK 与产物不入库，由 package.sh 现场组装）
+lib/
+dist/
+app.pid
+logs/
