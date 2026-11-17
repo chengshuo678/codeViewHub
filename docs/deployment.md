@@ -104,6 +104,108 @@ docker run -d --name review-hub \
   code-review-hub:1.0.0
 ```
 
+### 3.1 内网离线部署（无外网环境）
+
+内网机器无法访问 Docker Hub 与 Maven 中央仓库，采用「**外网构建 → 导出镜像 tar → 拷入内网 → 导入运行**」。
+
+#### 第一步：在外网机器构建并导出镜像
+
+任意一台有外网的 Mac / Linux / Windows（装有 Docker）：
+
+```bash
+git clone https://github.com/chengshuo678/codeViewHub.git
+cd codeViewHub/code-review-hub
+
+# 内网是 x86_64 服务器（绝大多数情况）
+docker build -t code-review-hub:1.0.0 .
+
+# 若内网是 ARM 服务器（鲲鹏/飞腾等信创机器），在 x86 构建机上改用：
+# docker build --platform linux/arm64 -t code-review-hub:1.0.0 .
+
+# 导出为 tar 文件（约 250MB）
+docker save -o code-review-hub.tar code-review-hub:1.0.0
+```
+
+> 用 U 盘 / scp / 内部文件服务把 `code-review-hub.tar` 拷贝到内网 Linux 机器。
+
+#### 第二步：内网机器离线安装 Docker Engine
+
+内网机器**只需安装 Docker**（JDK、数据库均已打包在镜像内）。两种方式任选：
+
+**方式 A：官方静态二进制包（推荐，零依赖）**
+
+在外网下载 `https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz`（ARM 机器选 `aarch64/` 目录），拷入内网后：
+
+```bash
+tar xzf docker-27.3.1.tgz
+sudo cp docker/* /usr/local/bin/
+
+# 注册 systemd 服务
+sudo tee /etc/systemd/system/docker.service >/dev/null <<'EOF'
+[Unit]
+Description=Docker Application Container Engine
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/dockerd
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now docker
+docker --version   # 出现版本号即成功
+```
+
+**方式 B：CentOS / RHEL rpm 包**
+
+在外网 `https://download.docker.com/linux/centos/` 对应版本目录下载 5 个包后拷入内网：
+
+```bash
+sudo yum localinstall -y docker-ce-*.rpm docker-ce-cli-*.rpm \
+    containerd.io-*.rpm docker-buildx-plugin-*.rpm docker-compose-plugin-*.rpm
+sudo systemctl enable --now docker
+```
+
+> 离线导入运行不依赖任何镜像仓库与外部网络；若内网有私有仓库（Harbor 等），另行配置 `/etc/docker/daemon.json` 的 `registry-mirrors`。
+
+#### 第三步：导入镜像并启动
+
+```bash
+# 导入镜像
+docker load -i code-review-hub.tar
+
+# 准备数据目录并启动
+sudo mkdir -p /data/code-review-hub
+docker run -d --name code-review-hub \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v /data/code-review-hub:/app/data \
+  -e REVIEW_WORKERS=2 \
+  code-review-hub:1.0.0
+
+# 验证
+docker ps                       # STATUS 应为 Up
+curl http://localhost:8080/     # 返回 HTML 即成功
+```
+
+防火墙放行端口（按需）：
+
+```bash
+sudo firewall-cmd --permanent --add-port=8080/tcp && sudo firewall-cmd --reload
+```
+
+#### 第四步：访问与后续运维
+
+- 浏览器打开 `http://<内网IP>:8080`，用 admin / admin123 登录后立即修改密码
+- 私有大模型：Web「系统设置 → 大模型连接」填**内网模型地址**（如 `http://10.x.x.x:8000/v1`，兼容 vLLM / Ollama / OneAPI）
+- 看日志：`docker logs -f code-review-hub`
+- **升级版本**：外网重新 build + save → 内网 `docker load` → `docker rm -f code-review-hub` → 用新镜像 tag 重跑第三步命令；保留 `/data/code-review-hub` 目录即保留全部评审数据
+- **备份**：只需备份 `/data/code-review-hub` 目录（H2 数据库文件）
+
 ## 4. 配置项说明
 
 ### 4.1 启动配置（application.yml / 环境变量，修改后需重启）
