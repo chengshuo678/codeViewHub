@@ -3,7 +3,7 @@ rem = r"""
 rem ============================================================
 rem CodeReview Hub - Jenkins/CI 评审提交脚本（Windows bat 版，行为与 submit-review.sh 一致）
 rem
-rem 用法（在流水线 stage 或命令行中）:
+rem 用法（参数与 submit-review.sh 完全一致）:
 rem   ci\submit-review.bat ^
 rem     --hub http://review-hub:8080 ^
 rem     --repo my-project ^
@@ -12,6 +12,14 @@ rem     [--api-key XXXXX]      # 平台设置了接入密钥时必填
 rem     [--with-files]         # 附带变更文件全文，提升评审质量
 rem     [--timeout 900]        # 最长等待秒数，默认 900
 rem     [--author zhangsan]    # 默认取 git config user.name
+rem
+rem 各环境调用方式:
+rem   cmd:         ci\submit-review.bat --hub ... --base origin/master --with-files
+rem   PowerShell:  .\ci\submit-review.bat --hub ... --base origin/master --with-files
+rem   Git Bash:    ./ci/submit-review.bat --hub ... --base origin/master --with-files
+rem                （bash 不搜索当前目录，直接敲文件名会报 command not found，必须带 ./ 或路径前缀）
+rem   Jenkins:     bat 'ci\\submit-review.bat --hub ... --base origin/master --with-files'
+rem   WSL:         建议改用 sh 版：bash ci/submit-review.sh ...
 rem
 rem 说明: diff 与附带全文自动排除 pdf/word 等二进制文档（后缀清单见脚本内 EXCLUDE_EXTS）
 rem

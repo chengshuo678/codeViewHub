@@ -128,7 +128,7 @@ stage('AI Code Review') {
 
 完整示例见 [ci/Jenkinsfile.example](../ci/Jenkinsfile.example)（含凭据配置与纯 curl 备选方案）。
 
-**Windows 节点**：提供等价的 [ci/submit-review.bat](../ci/submit-review.bat)（参数与 sh 版完全一致，依赖 git 与 Python 3.6+，无需 curl），stage 中改用 `bat 'ci\\submit-review.bat --hub ... --base origin/master --with-files'`。该文件为 bat/Python 单文件混合脚本，行为（含二进制文档排除、退出码）与 sh 版保持一致。
+**Windows 节点**：提供等价的 [ci/submit-review.bat](../ci/submit-review.bat)（参数与 sh 版完全一致，依赖 git 与 Python 3.6+，无需 curl），stage 中改用 `bat 'ci\\submit-review.bat --hub ... --base origin/master --with-files'`。该文件为 bat/Python 单文件混合脚本，行为（含二进制文档排除、退出码）与 sh 版保持一致。命令行手动调用时注意：cmd 下 `ci\submit-review.bat ...`；PowerShell 需 `.\` 前缀；**Git Bash/WSL 下直接敲文件名会报 `command not found`**（bash 不搜索当前目录），需带 `./` 路径前缀，或直接改用 `bash ci/submit-review.sh ...`。
 
 脚本参数：
 
