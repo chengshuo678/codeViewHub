@@ -12,6 +12,8 @@
 #     [--timeout 900]        # 最长等待秒数，默认 900
 #     [--author zhangsan]    # 默认取 git config user.name
 #
+# 说明: diff 与附带全文自动排除 pdf/word 等二进制文档（后缀清单见脚本内 EXCLUDE_EXTS）
+#
 # 退出码: 0=评审通过(门禁放行)  1=门禁拦截或评审失败  2=参数/环境错误
 # 依赖: bash 4+、git、curl、python3
 # ============================================================
@@ -40,10 +42,17 @@ AUTHOR="${AUTHOR:-$(git config user.name 2>/dev/null || echo unknown)}"
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
 COMMIT=$(git rev-parse --short=12 HEAD 2>/dev/null || echo "")
 
+# 不参与评审的二进制文档后缀（diff 生成与附带全文均过滤，大小写不敏感，可按需增删）
+EXCLUDE_EXTS="pdf doc docx docm rtf wps xls xlsx xlsm ppt pptx"
+EXCLUDE_SPEC=()
+for _ext in ${EXCLUDE_EXTS}; do
+  EXCLUDE_SPEC+=(":(exclude,icase)*.${_ext}")
+done
+
 # ---------- 1. 生成 diff ----------
-DIFF=$(git diff "${BASE}...HEAD" 2>/dev/null)
+DIFF=$(git diff "${BASE}...HEAD" -- . "${EXCLUDE_SPEC[@]}" 2>/dev/null)
 if [[ -z "$DIFF" ]]; then
-  DIFF=$(git diff "${BASE}" 2>/dev/null)
+  DIFF=$(git diff "${BASE}" -- . "${EXCLUDE_SPEC[@]}" 2>/dev/null)
 fi
 if [[ -z "$DIFF" ]]; then
   echo "[review] 没有检测到代码变更（base: ${BASE}），跳过评审"
@@ -57,17 +66,20 @@ REQ_FILE=$(mktemp /tmp/review-req.XXXXXX.json)
 DIFF_FILE=$(mktemp /tmp/review-diff.XXXXXX)
 trap 'rm -f "$REQ_FILE" "$DIFF_FILE"' EXIT
 printf '%s' "$DIFF" > "$DIFF_FILE"
-"$PY" - "$REQ_FILE" "$DIFF_FILE" "$REPO" "$BRANCH" "$COMMIT" "$AUTHOR" "$WITH_FILES" <<'PYEOF'
+"$PY" - "$REQ_FILE" "$DIFF_FILE" "$REPO" "$BRANCH" "$COMMIT" "$AUTHOR" "$WITH_FILES" "$BASE" "${EXCLUDE_SPEC[*]}" <<'PYEOF'
 import json, subprocess, sys
 
 out_path, diff_path, repo, branch, commit, author, with_files = sys.argv[1:8]
+base, exclude_joined = sys.argv[8], sys.argv[9]
 with open(diff_path, encoding="utf-8") as f:
     diff = f.read()
 
 files = {}
 if with_files == "yes":
-    names = subprocess.run(["git", "diff", "--name-only", "--diff-filter=ACMR"],
-                           capture_output=True, text=True).stdout.splitlines()
+    names = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=ACMR",
+         base + "...HEAD", "--", "."] + exclude_joined.split(),
+        capture_output=True, text=True).stdout.splitlines()
     for name in names[:100]:                      # 最多携带 100 个文件
         try:
             with open(name, encoding="utf-8") as f:

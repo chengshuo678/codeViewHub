@@ -142,6 +142,8 @@ stage('AI Code Review') {
 
 **脚本行为**：提交评审 → 轮询直到完成 → 打印摘要与详情链接 → 查询质量门禁。
 
+**文件过滤**：脚本对当前分支工作区执行 `git diff BASE...HEAD`（无需切换分支，Jenkins 检出的即目标分支）；diff 与 `--with-files` 附带全文会自动排除二进制文档（`pdf doc docx docm rtf wps xls xlsx xlsm ppt pptx`，大小写不敏感），后缀清单可在脚本内 `EXCLUDE_EXTS` 按需增删。注意 BASE 引用需在本地存在（浅克隆/单分支克隆的流水线需先 `git fetch` 基线分支）。
+
 **退出码**：`0` 门禁通过；`1` 门禁拦截（流水线失败，后续 stage 不再执行）；`2` 参数/环境错误。
 
 ### 3.3 质量门禁规则
