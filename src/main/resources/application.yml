@@ -27,6 +27,10 @@ spring:
 review:
   # 异步评审工作线程数（并发评审数）
   workers: 2
+  llm:
+    # 访问大模型的单次请求超时时间（分钟），大变更/深推理模型建议保持较大值；
+    # 启动时可通过环境变量 REVIEW_LLM_TIMEOUT_MINUTES 或命令行 --review.llm.timeout-minutes=xx 覆盖
+    timeout-minutes: 60
 
 logging:
   level:

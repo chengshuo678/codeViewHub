@@ -68,6 +68,7 @@ const I = {
     skills: svg('<path d="M12 3.5l1.8 4.4 4.4 1.8-4.4 1.8L12 15.9l-1.8-4.4-4.4-1.8 4.4-1.8z"/><path d="M18.5 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'),
     settings: svg('<path d="M4 7h9"/><path d="M19 7h1"/><path d="M4 17h1"/><path d="M11 17h9"/><circle cx="16" cy="7" r="2.4"/><circle cx="8" cy="17" r="2.4"/>'),
     back: svg('<path d="M14.5 5.5L8 12l6.5 6.5"/>'),
+    chevR: svg('<path d="M9.5 5.5L16 12l-6.5 6.5"/>'),
     plus: svg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
     close: svg('<path d="M6 6l12 12"/><path d="M18 6L6 18"/>'),
     refresh: svg('<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3.5V7h-3.5"/>'),
@@ -679,6 +680,10 @@ const ReviewDetailPage = {
       <section class="card diff-col">
         <div class="col-head">
           <h2>代码变更 <span class="count">{{ diffFiles.length }} 个文件</span></h2>
+          <div class="diff-switch">
+            <button :class="{ on: diffMode === 'split' }" @click="setDiffMode('split')">并排对比</button>
+            <button :class="{ on: diffMode === 'unified' }" @click="setDiffMode('unified')">逐行对比</button>
+          </div>
         </div>
         <div class="diff-body">
           <div class="diff-file" v-for="(df, fi) in diffFiles" :key="fi" :class="{ closed: !openMap[df.path] }">
@@ -688,18 +693,41 @@ const ReviewDetailPage = {
               <span class="df-stats"><i class="add">+{{ df.added }}</i><i class="del">-{{ df.deleted }}</i></span>
             </div>
             <div v-show="openMap[df.path]">
-              <template v-for="(l, li) in flatLines(df)" :key="li">
-                <div v-if="l.hunk" class="dline hunk">
-                  <span class="ln old"></span><span class="ln new"></span>
-                  <span class="lc">@@ -{{ l.oldStart }} +{{ l.newStart }} @@</span>
-                </div>
-                <div v-else class="dline" :class="l.t" :data-f="fi" :data-l="l.newNo">
-                  <span class="ln old">{{ l.oldNo || '' }}</span>
-                  <span class="ln new">{{ l.newNo || '' }}</span>
-                  <span class="lc">{{ l.text }}</span>
-                  <button class="fmarker" v-if="markerCount(df, l)" :title="markerTitle(df, l)"
-                          @click.stop="scrollToFindings(df, l)">{{ markerCount(df, l) }}</button>
-                </div>
+              <!-- 两栏并排：左=旧版本，右=新版本 -->
+              <template v-if="diffMode === 'split'">
+                <template v-for="(row, ri) in splitRows(df)" :key="ri">
+                  <div v-if="row.hunk" class="sline shunk">
+                    <span class="lc">@@ -{{ row.oldStart }} +{{ row.newStart }} @@</span>
+                  </div>
+                  <div v-else class="sline" :data-f="fi" :data-l="row.r ? row.r.newNo : null">
+                    <div class="scol" :class="row.l ? row.l.t : ''">
+                      <span class="ln">{{ row.l ? (row.l.oldNo || '') : '' }}</span>
+                      <span class="lc">{{ row.l ? row.l.text : '' }}</span>
+                    </div>
+                    <div class="scol" :class="row.r ? row.r.t : ''">
+                      <span class="ln">{{ row.r ? (row.r.newNo || '') : '' }}</span>
+                      <span class="lc">{{ row.r ? row.r.text : '' }}</span>
+                      <button class="fmarker" v-if="row.r && markerCount(df, row.r)" :title="markerTitle(df, row.r)"
+                              @click.stop="scrollToFindings(df, row.r)">{{ markerCount(df, row.r) }}</button>
+                    </div>
+                  </div>
+                </template>
+              </template>
+              <!-- 单栏逐行 -->
+              <template v-else>
+                <template v-for="(l, li) in flatLines(df)" :key="li">
+                  <div v-if="l.hunk" class="dline hunk">
+                    <span class="ln old"></span><span class="ln new"></span>
+                    <span class="lc">@@ -{{ l.oldStart }} +{{ l.newStart }} @@</span>
+                  </div>
+                  <div v-else class="dline" :class="l.t" :data-f="fi" :data-l="l.newNo">
+                    <span class="ln old">{{ l.oldNo || '' }}</span>
+                    <span class="ln new">{{ l.newNo || '' }}</span>
+                    <span class="lc">{{ l.text }}</span>
+                    <button class="fmarker" v-if="markerCount(df, l)" :title="markerTitle(df, l)"
+                            @click.stop="scrollToFindings(df, l)">{{ markerCount(df, l) }}</button>
+                  </div>
+                </template>
               </template>
             </div>
           </div>
@@ -784,6 +812,32 @@ const ReviewDetailPage = {
             });
             return out;
         }
+        /** diff 查看模式：split=两栏并排 / unified=单栏逐行（localStorage 记忆） */
+        const diffMode = ref(localStorage.getItem('crh_diff_mode') === 'unified' ? 'unified' : 'split');
+        function setDiffMode(m) {
+            diffMode.value = m;
+            try { localStorage.setItem('crh_diff_mode', m); } catch (e) { /* ignore */ }
+        }
+        /** 并排模式：把 hunk 行配对成左右两栏行（左=旧代码，右=新代码），context 双栏同显 */
+        function splitRows(df) {
+            const out = [];
+            df.hunks.forEach(h => {
+                out.push({ hunk: true, oldStart: h.oldStart, newStart: h.newStart });
+                let dels = [], adds = [];
+                const flush = () => {
+                    const n = Math.max(dels.length, adds.length);
+                    for (let i = 0; i < n; i++) out.push({ l: dels[i] || null, r: adds[i] || null });
+                    dels = []; adds = [];
+                };
+                h.lines.forEach(l => {
+                    if (l.t === 'del') dels.push(l);
+                    else if (l.t === 'add') adds.push(l);
+                    else { flush(); out.push({ l: l, r: l }); }
+                });
+                flush();
+            });
+            return out;
+        }
         function toggleFile(path) { openMap[path] = !openMap[path]; }
 
         function fileIndexOf(path) {
@@ -862,7 +916,7 @@ const ReviewDetailPage = {
             r, remarks, fSev, fStatus, openMap, diffFiles, filtered, isActive, duration,
             scoreColor, ringDash, IC: I, ST_LABEL, SRC_LABEL, SEV_ORDER, SEV_LABEL, FS_LABEL,
             fmtTime, flatLines, toggleFile, markerCount, markerTitle, scrollToLine, scrollToFindings,
-            setStatus, saveRemark, retry, reload, exportJson,
+            setStatus, saveRemark, retry, reload, exportJson, diffMode, setDiffMode, splitRows,
         };
     },
 };
@@ -1468,18 +1522,21 @@ const NoPerm = {
  * ============================================================ */
 const App = {
     template: `
-  <div class="layout" v-if="auth.user">
+  <div class="layout" v-if="auth.user" :class="{ collapsed: sideCollapsed }">
     <aside class="sidebar">
       <div class="logo">
         <div class="logo-mark">CR</div>
-        <div>
+        <div class="logo-txt">
           <div class="logo-name">CodeReview Hub</div>
           <div class="logo-sub">AI 代码评审平台</div>
         </div>
+        <button class="side-toggle" @click="toggleSide" :title="sideCollapsed ? '展开导航栏' : '收起导航栏'">
+          <span v-html="sideCollapsed ? IC.chevR : IC.back"></span>
+        </button>
       </div>
       <nav>
-        <a v-for="n in visibleNavs" :key="n.name" :href="'#/' + n.hash" :class="{ active: route.name === n.name }">
-          <span class="nav-ic" v-html="n.icon"></span>{{ n.label }}
+        <a v-for="n in visibleNavs" :key="n.name" :href="'#/' + n.hash" :class="{ active: route.name === n.name }" :title="n.label">
+          <span class="nav-ic" v-html="n.icon"></span><span class="nav-label">{{ n.label }}</span>
         </a>
       </nav>
       <div class="sidebar-foot">
@@ -1537,6 +1594,13 @@ const App = {
         const menuOpen = ref(false);
         const showChangePw = ref(false);
         const pw = reactive({ old: '', neo: '', repeat: '' });
+
+        /** 侧栏收起状态（localStorage 记忆，收起后仅留图标，读代码空间更大） */
+        const sideCollapsed = ref(localStorage.getItem('crh_side_collapsed') === '1');
+        function toggleSide() {
+            sideCollapsed.value = !sideCollapsed.value;
+            try { localStorage.setItem('crh_side_collapsed', sideCollapsed.value ? '1' : '0'); } catch (e) { /* ignore */ }
+        }
 
         const navs = [
             { name: 'dashboard', hash: '', label: '仪表盘', icon: I.dashboard },
@@ -1622,6 +1686,7 @@ const App = {
             auth, booting, menuOpen, showChangePw, pw,
             visibleNavs, view, avatarChar, route, toastState,
             openChangePw, submitChangePw, doLogout, IC: I,
+            sideCollapsed, toggleSide,
         };
     },
 };

@@ -257,6 +257,7 @@ cd code-review-hub-linux-aarch64
 |--------|----------|--------|------|
 | `server.port` | `SERVER_PORT` | 8080 | HTTP 端口 |
 | `review.workers` | `REVIEW_WORKERS` | 2 | 并发评审线程数，即同时评审的任务数 |
+| `review.llm.timeout-minutes` | `REVIEW_LLM_TIMEOUT_MINUTES` | 60 | 访问大模型的单次请求超时（分钟），大变更或深推理模型可适当调大 |
 | `spring.datasource.url` | `SPRING_DATASOURCE_URL` | `jdbc:h2:file:./data/review-hub` | H2 数据库文件位置 |
 
 ### 5.2 运行时配置（Web「系统设置」页，保存即生效，无需重启）

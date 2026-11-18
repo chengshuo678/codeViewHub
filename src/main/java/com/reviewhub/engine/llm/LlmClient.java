@@ -9,6 +9,7 @@ import com.reviewhub.engine.diff.DiffParser;
 import com.reviewhub.service.SettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -31,14 +32,18 @@ public class LlmClient {
 
     private final SettingsService settings;
     private final DiffParser diffParser;
+    /** 访问大模型的单次请求超时（分钟），启动时通过 review.llm.timeout-minutes 配置，默认 60 */
+    private final long timeoutMinutes;
     private final ObjectMapper om = new ObjectMapper();
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .build();
 
-    public LlmClient(SettingsService settings, DiffParser diffParser) {
+    public LlmClient(SettingsService settings, DiffParser diffParser,
+                     @Value("${review.llm.timeout-minutes:60}") long timeoutMinutes) {
         this.settings = settings;
         this.diffParser = diffParser;
+        this.timeoutMinutes = timeoutMinutes;
     }
 
     public boolean isMock() {
@@ -120,7 +125,7 @@ public class LlmClient {
             try {
                 HttpRequest.Builder rb = HttpRequest.newBuilder()
                         .uri(URI.create(url))
-                        .timeout(Duration.ofSeconds(300))
+                        .timeout(Duration.ofMinutes(timeoutMinutes))
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(om.writeValueAsString(body)));
                 if (!apiKey.isEmpty()) rb.header("Authorization", "Bearer " + apiKey);
