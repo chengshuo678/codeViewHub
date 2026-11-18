@@ -311,6 +311,9 @@ cd code-review-hub-linux-aarch64
 **Q: 评审一直失败，提示模型连接错误？**
 「系统设置 → 测试连接」排查网络与凭据；确认 baseUrl 填到 `/v1`；容器内部访问宿主机模型时注意使用宿主机真实 IP 而非 `localhost`。
 
+**Q: 如何从日志排查大模型调用问题（如全部文件分组评审失败）？**
+每次 LLM 调用都会打印两条 INFO 日志：`LLM 请求: POST <url> | model=<模型> | 消息 N 条 | 工具 N 个 | 请求体 N 字符` 与 `LLM 响应: HTTP <状态码> | 耗时 Nms | 响应体 N 字符 | 内容: <响应原文，超长截断至 4000 字符>`；失败重试另有 `LLM 调用失败(第 N 次): <原因> | url=<地址>` WARN 日志。常见排查：`HTTP 404` = baseUrl 路径不对（应类似 `http://10.0.0.5:8000/v1`）；`HTTP 401/403` = apiKey 错误；`HTTP 400` 含 model not found = 模型名不对；`ConnectException` = 网络不通/IP 或端口错误；`HttpTimeoutException` = 超时，调大 `REVIEW_LLM_TIMEOUT_MINUTES`；响应内容非预期 JSON = 模型输出异常。需要查看完整请求体（含 diff 与文件全文）时，将 `logging.level.com.reviewhub` 设为 `DEBUG`（如启动参数 `--logging.level.com.reviewhub=DEBUG`）。
+
 **Q: 评审很慢？**
 1) 降低 `review.maxRounds`；2) 关闭 `review.reflection`；3) 增大 `REVIEW_WORKERS` 提高并发；4) 检查模型服务负载。
 

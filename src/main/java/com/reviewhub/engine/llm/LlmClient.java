@@ -121,16 +121,36 @@ public class LlmClient {
 
     private LlmModels.LlmResponse sendWithRetry(String url, ObjectNode body, String apiKey) {
         RuntimeException last = null;
+        String bodyJson;
+        try {
+            bodyJson = om.writeValueAsString(body);
+        } catch (Exception e) {
+            throw new LlmException("序列化 LLM 请求失败: " + e.getMessage(), e);
+        }
+        // 请求详情：INFO 打印摘要，DEBUG 打印完整请求体（含 diff/文件内容，体积大默认不打印）
+        log.info("LLM 请求: POST {} | model={} | 消息 {} 条 | 工具 {} 个 | 请求体 {} 字符{}",
+                url, body.path("model").asText("?"), body.path("messages").size(),
+                body.path("tools").isMissingNode() ? 0 : body.path("tools").size(),
+                bodyJson.length(), apiKey.isEmpty() ? "" : " | Bearer 鉴权");
+        if (log.isDebugEnabled()) {
+            log.debug("LLM 请求体全文: {}", bodyJson);
+        }
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
                 HttpRequest.Builder rb = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .timeout(Duration.ofMinutes(timeoutMinutes))
                         .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(om.writeValueAsString(body)));
+                        .POST(HttpRequest.BodyPublishers.ofString(bodyJson));
                 if (!apiKey.isEmpty()) rb.header("Authorization", "Bearer " + apiKey);
 
+                long t0 = System.currentTimeMillis();
                 HttpResponse<String> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofString());
+                // 响应结果：状态码 + 耗时 + 内容（成功/失败均打印，超长截断保留前 4000 字符）
+                log.info("LLM 响应: HTTP {} | 耗时 {}ms | 响应体 {} 字符 | 内容: {}",
+                        resp.statusCode(), System.currentTimeMillis() - t0,
+                        resp.body() == null ? 0 : resp.body().length(),
+                        truncate(resp.body(), 4000));
                 if (resp.statusCode() >= 500 || resp.statusCode() == 429) {
                     throw new java.io.IOException("HTTP " + resp.statusCode() + ": " + snippet(resp.body()));
                 }
@@ -141,8 +161,10 @@ public class LlmClient {
             } catch (LlmException e) {
                 throw e;
             } catch (Exception e) {
-                last = new LlmException("调用大模型失败（第 " + attempt + " 次）: " + e.getMessage(), e);
-                log.warn("LLM 调用失败: {}", e.getMessage());
+                // 连接拒绝等异常 getMessage() 可能为 null，兜底打印异常类名便于定位
+                String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                last = new LlmException("调用大模型失败（第 " + attempt + " 次）: " + reason, e);
+                log.warn("LLM 调用失败(第 {} 次): {} | url={}", attempt, reason, url);
                 sleep(attempt * 2000L);
             }
         }
@@ -285,6 +307,12 @@ public class LlmClient {
         if (s == null) return "";
         s = s.replaceAll("\\s+", " ");
         return s.length() > 300 ? s.substring(0, 300) + "..." : s;
+    }
+
+    /** 日志用截断：保留原始换行，超长时截断并注明总长度 */
+    private static String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max) + "\n…(日志截断，响应体共 " + s.length() + " 字符)";
     }
 
     private static void sleep(long ms) {
