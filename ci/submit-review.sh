@@ -11,6 +11,10 @@
 #     [--with-files]         # 附带变更文件全文，提升评审质量
 #     [--timeout 900]        # 最长等待秒数，默认 900
 #     [--author zhangsan]    # 默认取 git config user.name
+#     [--repo-url http://git.example.com/group/project.git]
+#                            # 仓库地址：供平台【深度扫描】克隆该分支全量代码做影响分析
+#     [--req-docs "url1,url2"]    # 需求文档 wiki 链接（逗号分隔，最多 5 个，评审时抓取内容）
+#     [--design-docs "url1,url2"] # 设计文档 wiki 链接（逗号分隔，最多 5 个）
 #
 # 说明: diff 与附带全文自动排除 pdf/word 等二进制文档（后缀清单见脚本内 EXCLUDE_EXTS）
 #
@@ -20,6 +24,7 @@
 set -uo pipefail
 
 HUB=""; REPO=""; BASE=""; API_KEY=""; WITH_FILES="no"; TIMEOUT=900; AUTHOR=""
+REPO_URL=""; REQ_DOCS=""; DESIGN_DOCS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --hub) HUB="$2"; shift 2 ;;
@@ -29,6 +34,9 @@ while [[ $# -gt 0 ]]; do
     --with-files) WITH_FILES="yes"; shift ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --author) AUTHOR="$2"; shift 2 ;;
+    --repo-url) REPO_URL="$2"; shift 2 ;;
+    --req-docs) REQ_DOCS="$2"; shift 2 ;;
+    --design-docs) DESIGN_DOCS="$2"; shift 2 ;;
     *) echo "[review] 未知参数: $1"; exit 2 ;;
   esac
 done
@@ -66,11 +74,13 @@ REQ_FILE=$(mktemp /tmp/review-req.XXXXXX.json)
 DIFF_FILE=$(mktemp /tmp/review-diff.XXXXXX)
 trap 'rm -f "$REQ_FILE" "$DIFF_FILE"' EXIT
 printf '%s' "$DIFF" > "$DIFF_FILE"
-"$PY" - "$REQ_FILE" "$DIFF_FILE" "$REPO" "$BRANCH" "$COMMIT" "$AUTHOR" "$WITH_FILES" "$BASE" "${EXCLUDE_SPEC[*]}" <<'PYEOF'
+"$PY" - "$REQ_FILE" "$DIFF_FILE" "$REPO" "$BRANCH" "$COMMIT" "$AUTHOR" "$WITH_FILES" "$BASE" "${EXCLUDE_SPEC[*]}" \
+     "$REPO_URL" "$REQ_DOCS" "$DESIGN_DOCS" <<'PYEOF'
 import json, subprocess, sys
 
 out_path, diff_path, repo, branch, commit, author, with_files = sys.argv[1:8]
 base, exclude_joined = sys.argv[8], sys.argv[9]
+repo_url, req_docs, design_docs = sys.argv[10], sys.argv[11], sys.argv[12]
 with open(diff_path, encoding="utf-8") as f:
     diff = f.read()
 
@@ -93,6 +103,16 @@ payload = {"repoName": repo, "branch": branch, "commitId": commit,
            "author": author, "source": "JENKINS", "diff": diff}
 if files:
     payload["files"] = files
+if repo_url:
+    payload["repoUrl"] = repo_url
+# 需求/设计文档 wiki 链接（逗号分隔 → 数组）
+def split_links(s):
+    return [x.strip() for x in (s or "").replace("，", ",").split(",") if x.strip()]
+req_list, design_list = split_links(req_docs), split_links(design_docs)
+if req_list:
+    payload["requirementDocs"] = req_list
+if design_list:
+    payload["designDocs"] = design_list
 
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump(payload, f, ensure_ascii=False)

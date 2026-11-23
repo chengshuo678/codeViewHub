@@ -12,6 +12,10 @@ rem     [--api-key XXXXX]      # 平台设置了接入密钥时必填
 rem     [--with-files]         # 附带变更文件全文，提升评审质量
 rem     [--timeout 900]        # 最长等待秒数，默认 900
 rem     [--author zhangsan]    # 默认取 git config user.name
+rem     [--repo-url http://git.example.com/group/project.git]
+rem                            # 仓库地址：供平台【深度扫描】克隆该分支全量代码做影响分析
+rem     [--req-docs "url1,url2"]    # 需求文档 wiki 链接（逗号分隔，最多 5 个，评审时抓取内容）
+rem     [--design-docs "url1,url2"] # 设计文档 wiki 链接（逗号分隔，最多 5 个）
 rem
 rem 各环境调用方式:
 rem   cmd:         ci\submit-review.bat --hub ... --base origin/master --with-files
@@ -58,6 +62,7 @@ def die(msg, code=2):
 
 # ---------- 1. 解析参数 ----------
 hub = repo = base = api_key = author = ""
+repo_url = req_docs = design_docs = ""
 with_files = False
 timeout_sec = 900
 
@@ -65,7 +70,8 @@ args = sys.argv[1:]
 i = 0
 while i < len(args):
     a = args[i]
-    if a in ("--hub", "--repo", "--base", "--api-key", "--timeout", "--author"):
+    if a in ("--hub", "--repo", "--base", "--api-key", "--timeout", "--author",
+             "--repo-url", "--req-docs", "--design-docs"):
         if i + 1 >= len(args):
             die("参数 %s 缺少取值" % a)
         v = args[i + 1]
@@ -80,6 +86,12 @@ while i < len(args):
             api_key = v
         elif a == "--author":
             author = v
+        elif a == "--repo-url":
+            repo_url = v
+        elif a == "--req-docs":
+            req_docs = v
+        elif a == "--design-docs":
+            design_docs = v
         else:
             try:
                 timeout_sec = int(v)
@@ -161,6 +173,20 @@ payload = {"repoName": repo, "branch": branch, "commitId": commit,
            "author": author, "source": "JENKINS", "diff": diff}
 if files:
     payload["files"] = files
+if repo_url:
+    payload["repoUrl"] = repo_url
+# 需求/设计文档 wiki 链接（逗号分隔 → 数组）
+
+
+def split_links(s):
+    return [x.strip() for x in (s or "").replace("，", ",").split(",") if x.strip()]
+
+
+req_list, design_list = split_links(req_docs), split_links(design_docs)
+if req_list:
+    payload["requirementDocs"] = req_list
+if design_list:
+    payload["designDocs"] = design_list
 
 try:
     resp = call("POST", "/api/jenkins/submit", payload)

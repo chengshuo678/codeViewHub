@@ -36,7 +36,9 @@ public class JenkinsController {
         return reviewController.submit(new ReviewDtos.SubmitReviewRequest(
                 req.repoName(), req.branch(), req.commitId(), req.author(),
                 ReviewSource.JENKINS.name(), req.diff(), req.files(),
-                req.jenkinsJob(), req.jenkinsBuild(), req.callbackUrl()));
+                req.jenkinsJob(), req.jenkinsBuild(), req.callbackUrl(),
+                req.requirementDocs(), req.designDocs(), req.requirementDocText(), req.designDocText(),
+                req.repoUrl()));
     }
 
     /** 轮询评审状态（轻量，不含 diff） */

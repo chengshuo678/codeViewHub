@@ -274,6 +274,9 @@ cd code-review-hub-linux-aarch64
 | `review.reflection` | true | 评审后反思过滤（二次核对去除误报，消耗额外 token） |
 | `review.gateSeverity` | CRITICAL | 质量门禁阈值：该级别及以上问题将阻断流水线 |
 | `security.apiKey` | （空） | Jenkins 接入密钥，配置后 `/api/jenkins/**` 必须携带 `X-API-Key` 请求头 |
+| `git.user` / `git.password` | （空） | 深度扫描克隆 http(s) Git 仓库的凭据（用户名 + 密码/访问令牌；GitLab 令牌通常填 `oauth2`）；`file://` 本地仓库无需配置 |
+
+> **深度扫描网络要求**：平台内置纯 Java Git 客户端（JGit），**无需在服务器上安装 git**；但 http(s) 仓库需要平台进程能直接访问对应 Git 服务（含端口连通与凭据权限）。克隆为浅克隆（depth 1），大仓库也只拉最近一次提交的全量文件。
 
 ## 6. 接入私有大模型
 
@@ -319,6 +322,9 @@ cd code-review-hub-linux-aarch64
 
 **Q: 忘记了接入密钥？**
 数据库 `app_setting` 表中 `security.apiKey` 即为密钥；或清空该行即关闭鉴权。
+
+**Q: 深度扫描失败？**
+查看 `deepScanError`（详情页会展示）：`Repository not found / 认证失败` → 核对「系统设置 → 仓库访问」凭据；`无法连接` → 平台服务器到 Git 服务的网络/端口；`ref not found` → 分支名不对（或仓库默认分支不是 main/master 时需显式填写）。本地验证可用 `file:///仓库绝对路径` 作为仓库地址。
 
 **Q: 忘记了管理员密码？**
 两种恢复方式：

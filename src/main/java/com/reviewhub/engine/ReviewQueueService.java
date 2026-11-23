@@ -40,6 +40,7 @@ public class ReviewQueueService {
     private final ReviewTaskRepository taskRepo;
     private final FindingRepository findingRepo;
     private final ReviewEngine engine;
+    private final DocFetcher docFetcher;
     private final ObjectMapper om = new ObjectMapper();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
@@ -49,10 +50,12 @@ public class ReviewQueueService {
     public ReviewQueueService(ReviewTaskRepository taskRepo,
                               FindingRepository findingRepo,
                               ReviewEngine engine,
+                              DocFetcher docFetcher,
                               @Value("${review.workers:2}") int workers) {
         this.taskRepo = taskRepo;
         this.findingRepo = findingRepo;
         this.engine = engine;
+        this.docFetcher = docFetcher;
         this.workers = Math.max(1, workers);
     }
 
@@ -107,7 +110,15 @@ public class ReviewQueueService {
         task = taskRepo.save(task);
 
         try {
-            ReviewEngine.EngineResult result = engine.review(task);
+            // 抓取需求/设计文档（不阻断评审；失败仅记录到 docsInfo）
+            String docsContext = "";
+            try {
+                docsContext = docFetcher.fetchAndPersist(task);
+                task = taskRepo.save(task);
+            } catch (Exception e) {
+                log.warn("参考文档抓取失败 task={}: {}", taskId, e.getMessage());
+            }
+            ReviewEngine.EngineResult result = engine.review(task, docsContext);
             findingRepo.deleteByTaskId(task.getId());
             int b = 0, c = 0, m = 0, n = 0, i = 0;
             for (ReviewEngine.RawFinding rf : result.findings()) {

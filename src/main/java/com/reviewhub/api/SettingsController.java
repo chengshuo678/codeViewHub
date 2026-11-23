@@ -35,6 +35,8 @@ public class SettingsController {
                 settings.getBool("review.reflection", true),
                 settings.get("review.gateSeverity", "CRITICAL"),
                 !settings.get("security.apiKey").isBlank(),
+                settings.get("git.user"),
+                !settings.get("git.password").isBlank(),
                 "1.0.0");
     }
 
@@ -62,6 +64,8 @@ public class SettingsController {
             settings.put("review.gateSeverity", gs.name());
         }
         if (req.hubApiKey() != null && !req.hubApiKey().isBlank()) settings.put("security.apiKey", req.hubApiKey().trim());
+        if (req.gitUser() != null) settings.put("git.user", req.gitUser().trim());
+        if (req.gitPassword() != null && !req.gitPassword().isBlank()) settings.put("git.password", req.gitPassword().trim());
         return view();
     }
 
@@ -69,6 +73,13 @@ public class SettingsController {
     @DeleteMapping("/hub-api-key")
     public AdminDtos.SettingsView clearHubApiKey() {
         settings.put("security.apiKey", "");
+        return view();
+    }
+
+    /** 清空 Git 访问密码/令牌 */
+    @DeleteMapping("/git-password")
+    public AdminDtos.SettingsView clearGitPassword() {
+        settings.put("git.password", "");
         return view();
     }
 

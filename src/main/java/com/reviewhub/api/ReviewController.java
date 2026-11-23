@@ -7,6 +7,8 @@ import com.reviewhub.domain.ReviewSource;
 import com.reviewhub.domain.ReviewStatus;
 import com.reviewhub.domain.ReviewTask;
 import com.reviewhub.domain.Severity;
+import com.reviewhub.engine.DeepScanService;
+import com.reviewhub.engine.DocFetcher;
 import com.reviewhub.engine.ReviewQueueService;
 import com.reviewhub.repo.FindingRepository;
 import com.reviewhub.repo.ReviewTaskRepository;
@@ -37,14 +39,19 @@ public class ReviewController {
     private final FindingRepository findingRepo;
     private final ReviewQueueService queue;
     private final SettingsService settings;
+    private final DocFetcher docFetcher;
+    private final DeepScanService deepScanService;
     private final ObjectMapper om = new ObjectMapper();
 
     public ReviewController(ReviewTaskRepository taskRepo, FindingRepository findingRepo,
-                            ReviewQueueService queue, SettingsService settings) {
+                            ReviewQueueService queue, SettingsService settings,
+                            DocFetcher docFetcher, DeepScanService deepScanService) {
         this.taskRepo = taskRepo;
         this.findingRepo = findingRepo;
         this.queue = queue;
         this.settings = settings;
+        this.docFetcher = docFetcher;
+        this.deepScanService = deepScanService;
     }
 
     /** 提交评审（异步：立即入队并返回） */
@@ -70,6 +77,11 @@ public class ReviewController {
         task.setJenkinsJob(trim(req.jenkinsJob()));
         task.setJenkinsBuild(trim(req.jenkinsBuild()));
         task.setCallbackUrl(trim(req.callbackUrl()));
+        task.setRepoUrl(parseRepoUrl(req.repoUrl()));
+        task.setRequirementDocs(serializeUrls(sanitizeUrls(req.requirementDocs(), "需求文档链接")));
+        task.setDesignDocs(serializeUrls(sanitizeUrls(req.designDocs(), "设计文档链接")));
+        task.setRequirementDocText(clipText(req.requirementDocText(), MAX_DOC_TEXT));
+        task.setDesignDocText(clipText(req.designDocText(), MAX_DOC_TEXT));
         task.setStatus(ReviewStatus.QUEUED);
         task = taskRepo.save(task);
 
@@ -120,7 +132,42 @@ public class ReviewController {
                 t.getJenkinsJob(), t.getJenkinsBuild(), t.getDiffText(),
                 t.getCntBlocker(), t.getCntCritical(), t.getCntMajor(), t.getCntMinor(), t.getCntInfo(),
                 str(t.getCreatedAt()), str(t.getStartedAt()), str(t.getFinishedAt()),
-                queueDepth, findings);
+                queueDepth, findings,
+                t.getRepoUrl(),
+                docFetcher.parseUrls(t.getRequirementDocs()), docFetcher.parseUrls(t.getDesignDocs()),
+                t.getDocsInfo(),
+                t.getDeepScanStatus() == null ? "NONE" : t.getDeepScanStatus().name(),
+                t.getDeepScanReport(), t.getDeepScanError(),
+                str(t.getDeepScanStartedAt()), str(t.getDeepScanFinishedAt()));
+    }
+
+    /** 触发深度扫描：拉取该分支仓库全部代码，做仓库级改动影响分析 */
+    @PostMapping("/{id}/deep-scan")
+    public ReviewDtos.DeepScanResponse deepScan(@PathVariable Long id,
+                                                @RequestBody(required = false) ReviewDtos.DeepScanRequest req) {
+        ReviewTask t = taskRepo.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("评审任务不存在: " + id));
+        if (t.getStatus() == ReviewStatus.QUEUED || t.getStatus() == ReviewStatus.RUNNING) {
+            throw new IllegalStateException("评审尚未完成，请等待评审结束后再深度扫描");
+        }
+        if (t.getDeepScanStatus() == com.reviewhub.domain.DeepScanStatus.QUEUED
+                || t.getDeepScanStatus() == com.reviewhub.domain.DeepScanStatus.RUNNING) {
+            throw new IllegalStateException("深度扫描正在进行中，请稍候");
+        }
+        if (req != null && req.repoUrl() != null && !req.repoUrl().isBlank()) {
+            t.setRepoUrl(parseRepoUrl(req.repoUrl()));
+        }
+        if (req != null && req.branch() != null && !req.branch().isBlank()) {
+            t.setBranch(req.branch().trim());
+        }
+        if (t.getRepoUrl() == null || t.getRepoUrl().isBlank()) {
+            throw new IllegalArgumentException("请先提供仓库地址（git clone 用的 http(s) 或 file:// 地址）");
+        }
+        t.setDeepScanStatus(com.reviewhub.domain.DeepScanStatus.QUEUED);
+        t.setDeepScanError(null);
+        taskRepo.save(t);
+        deepScanService.enqueue(t.getId());
+        return new ReviewDtos.DeepScanResponse("QUEUED");
     }
 
     /** 更新发现的状态 / 备注 */
@@ -206,6 +253,59 @@ public class ReviewController {
     }
 
     // ------------------------------------------------------------------
+
+    private static final int MAX_DOC_TEXT = 50 * 1024;   // 手动粘贴的文档内容上限（字符）
+    private static final int MAX_DOC_URLS = 5;          // 每类文档链接数量上限
+
+    /** 校验链接列表：http/https、去重、限长限量 */
+    private static List<String> sanitizeUrls(List<String> urls, String what) {
+        if (urls == null || urls.isEmpty()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String u : urls) {
+            if (u == null) continue;
+            String v = u.trim();
+            if (v.isEmpty()) continue;
+            if (!v.startsWith("http://") && !v.startsWith("https://")) {
+                throw new IllegalArgumentException(what + "仅支持 http/https 链接：" + clipText(v, 100));
+            }
+            if (v.length() > 500) {
+                throw new IllegalArgumentException(what + "过长（>500 字符）");
+            }
+            if (!out.contains(v)) out.add(v);
+        }
+        if (out.size() > MAX_DOC_URLS) {
+            throw new IllegalArgumentException(what + "最多 " + MAX_DOC_URLS + " 个");
+        }
+        return out;
+    }
+
+    private static String serializeUrls(List<String> urls) {
+        if (urls.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < urls.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append('"').append(urls.get(i).replace("\\", "\\\\").replace("\"", "\\\"")).append('"');
+        }
+        return sb.append(']').toString();
+    }
+
+    /** 校验仓库地址：http(s) 或 file:// */
+    private static String parseRepoUrl(String s) {
+        if (s == null || s.isBlank()) return null;
+        String v = s.trim();
+        if (!v.startsWith("http://") && !v.startsWith("https://") && !v.startsWith("file://") && !v.startsWith("file:")) {
+            throw new IllegalArgumentException("仓库地址仅支持 http(s):// 或 file://（" + clipText(v, 100) + "）");
+        }
+        if (v.length() > 500) {
+            throw new IllegalArgumentException("仓库地址过长（>500 字符）");
+        }
+        return v;
+    }
+
+    private static String clipText(String s, int max) {
+        if (s == null) return null;
+        return s.length() > max ? s.substring(0, max) + "…（内容过长已截断）" : s;
+    }
 
     private String serializeFiles(Map<String, String> files) {
         if (files == null || files.isEmpty()) return null;

@@ -35,7 +35,9 @@ public final class AdminDtos {
             Integer groupMaxLines,
             Boolean reflection,
             String gateSeverity,
-            String hubApiKey) {
+            String hubApiKey,
+            String gitUser,
+            String gitPassword) {
     }
 
     public record SettingsView(
@@ -43,6 +45,7 @@ public final class AdminDtos {
             boolean apiKeySet,
             int maxRounds, int groupMaxLines, boolean reflection, String gateSeverity,
             boolean hubApiKeySet,
+            String gitUser, boolean gitPasswordSet,
             String hubVersion) {
     }
 

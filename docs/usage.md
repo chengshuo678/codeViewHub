@@ -52,7 +52,7 @@
 - 任务列表：按时间倒序展示所有评审，支持按状态筛选、按仓库/分支/作者搜索
 - 每行显示：仓库/分支、问题数分布（按严重级别着色）、状态、评分、提交时间
 - 点击任意行进入**评审详情**
-- 右上角「手动提交评审」：粘贴 git diff 输出即可发起一次评审（不依赖 Jenkins）
+- 右上角「手动提交评审」：粘贴 git diff 输出即可发起一次评审（不依赖 Jenkins）；可同时填写**仓库地址**（供深度扫描克隆全仓代码）、**需求文档链接**与**设计文档链接**（每类每行一个、最多 5 个，评审时平台自动抓取 wiki 内容注入评审上下文；链接抓取失败时可用表单中的「手动粘贴文档内容」兜底）
 
 ### 2.2 评审详情
 
@@ -73,9 +73,20 @@
 - 点击左侧发现的「文件:行号」，diff 自动滚动到该行并高亮闪烁——**双向联动定位**
 - 顶部显示质量评分环与 LLM 总结；右上角可导出 JSON、失败时可重试
 
+**参考文档区**：提交时携带了需求/设计文档链接的任务，详情页头部下方会展示「参考文档」区——每个链接的抓取状态（已注入字数 / 抓取失败原因）一目了然，链接可直接点击跳回 wiki。
+
+**影响分析（深度扫描）**：评审完成后，详情页右上角出现【深度扫描】按钮：
+
+- 点击后平台用**内置纯 Java Git 客户端**克隆该分支仓库的全部代码（无需平台安装 git）
+- 从 diff 提取变更符号（类/方法/函数/常量），在全仓做**反向引用查找**（谁引用了被改的符号）
+- 结合引用证据由大模型产出**影响报告**：受影响模块（文件 + 风险级别 + 原因）、隐藏风险、回归测试建议
+- 「静态引用命中」可展开查看每个受影响文件引用了哪些符号、多少处命中
+- 任务未提供仓库地址时，点击按钮会弹出补填窗口（支持 http(s) Git 地址或 `file://` 本地路径）；http 仓库的账号/访问令牌在「系统设置 → 仓库访问」统一配置
+- 扫描期间页面每 3 秒自动刷新；报告完成后可随时点击「重新深度扫描」重跑
+
 **左侧导航栏**：点击顶部图标按钮可收起导航栏（仅保留图标），为读代码腾出更大空间，状态自动记忆。
 
-**实时刷新**：评审进行中页面每 3 秒自动刷新，完成后停止。
+**实时刷新**：评审进行中、深度扫描进行中时页面每 3 秒自动刷新，完成后停止。
 
 ### 2.3 评审规则
 
@@ -98,6 +109,7 @@
 - **大模型连接**：提供者（mock/openai）、Base URL、API Key、模型名、温度；「测试连接」一键验证
 - **评审引擎**：Agent 最大轮次、单组最大 diff 行数、反思过滤开关、质量门禁阈值
 - **安全**：接入密钥，配置后 Jenkins 端点必须携带 `X-API-Key`
+- **仓库访问**：深度扫描克隆 http(s) Git 仓库用的用户名与密码/访问令牌（GitLab 令牌通常填 `oauth2` + 令牌）；`file://` 本地仓库无需配置
 
 所有设置保存后**立即生效**，无需重启。
 
@@ -141,6 +153,29 @@ stage('AI Code Review') {
 | `--with-files` | 否 | 附带变更文件全文，显著提升评审质量（推荐开启） |
 | `--timeout` | 否 | 最长等待秒数，默认 900 |
 | `--author` | 否 | 默认取 `git config user.name` |
+| `--repo-url` | 否 | 仓库 Git 地址（http(s)），供评审详情页【深度扫描】克隆该分支全量代码做影响分析 |
+| `--req-docs` | 否 | 需求文档 wiki 链接，逗号分隔（最多 5 个，评审时平台抓取内容注入上下文） |
+| `--design-docs` | 否 | 设计文档 wiki 链接，逗号分隔（最多 5 个） |
+
+示例：携带文档与仓库地址提交——
+
+```groovy
+stage('AI Code Review') {
+    steps {
+        sh '''
+        bash ci/submit-review.sh \
+          --hub "$REVIEW_HUB" \
+          --api-key "$REVIEW_API_KEY" \
+          --repo "$JOB_BASE_NAME" \
+          --base origin/master \
+          --with-files \
+          --repo-url "$GIT_URL" \
+          --req-docs "http://wiki.internal/requirement/123,http://wiki.internal/requirement/456" \
+          --design-docs "http://wiki.internal/design/789"
+        '''
+    }
+}
+```
 
 **脚本行为**：提交评审 → 轮询直到完成 → 打印摘要与详情链接 → 查询质量门禁。
 
@@ -208,11 +243,16 @@ curl -X POST http://localhost:8080/api/reviews \
     "author": "zhangsan",
     "diff": "<git diff 输出>",
     "files": { "src/A.java": "<完整文件内容，可选>" },
-    "callbackUrl": "http://your-im-webhook（可选）"
+    "callbackUrl": "http://your-im-webhook（可选）",
+    "requirementDocs": ["http://wiki.internal/req/123", "http://wiki.internal/req/456"],
+    "designDocs": ["http://wiki.internal/design/789"],
+    "requirementDocText": "链接抓取失败时的手动粘贴兜底（可选，≤50k 字符）",
+    "designDocText": null,
+    "repoUrl": "http://git.internal/group/order-service.git"
   }'
 ```
 
-返回 `{"id": 1, "status": "QUEUED"}`。`diff` 上限 4MB，`files` 序列化后上限 16MB。
+返回 `{"id": 1, "status": "QUEUED"}`。`diff` 上限 4MB，`files` 序列化后上限 16MB。文档链接仅支持 http/https、每类最多 5 个；`repoUrl` 支持 http(s) 与 `file://`（本地仓库），供深度扫描克隆。
 
 ### 4.3 任务与结果
 
@@ -222,6 +262,7 @@ curl -X POST http://localhost:8080/api/reviews \
 | GET | `/api/reviews/{id}` | 详情：任务元数据 + diff 全文 + 全部发现 |
 | PUT | `/api/reviews/{id}/findings/{fid}` | 更新发现：`{"status":"CONFIRMED","remark":"..."}`，status 可选 PENDING/CONFIRMED/IGNORED/FALSE_POSITIVE |
 | POST | `/api/reviews/{id}/retry` | 失败重试 |
+| POST | `/api/reviews/{id}/deep-scan` | 触发深度扫描（仓库级影响分析）。请求体可选 `{"repoUrl":"...","branch":"..."}` 用于补填仓库地址；任务需已结束评审且提供了仓库地址。详情响应中的 `deepScanStatus`（NONE/QUEUED/RUNNING/SUCCESS/FAILED）与 `deepScanReport`（影响报告 JSON）可轮询 |
 | GET | `/api/reviews/{id}/gate` | 质量门禁：`{"pass":true,"reason":"…","blockers":0,"criticals":0}` |
 | GET | `/api/reviews/stats` | 仪表盘统计 |
 
@@ -248,13 +289,16 @@ curl -X POST http://localhost:8080/api/reviews \
 
 ## 5. 评审流程说明（了解引擎如何工作）
 
-1. **提交**：diff（及可选文件内容包）入库，任务进入队列，立即返回任务 ID
+1. **提交**：diff（及可选文件内容包、需求/设计文档链接）入库，任务进入队列，立即返回任务 ID
 2. **排队**：worker 线程按顺序消费（并发数 = `review.workers`）
-3. **确定性预处理**：解析 diff → 过滤二进制/纯删除文件 → 规则路由（Ant 通配 + 花括号展开）→ 文件分组
-4. **Agent 评审**：模型收到「技能提示词 + 命中规则 + 分组 diff」，可调用 `file_read` / `code_search` 工具读取文件内容与搜索代码（最多 `maxRounds` 轮），最终输出严格 JSON 的发现列表
-5. **行号定位**：模型给出的行号被吸附到该文件真实的新增行上（避免行号漂移）
-6. **反思过滤**（可关）：将全部发现连同 ±5 行代码上下文再交给模型核对，过滤臆测与重复项
-7. **落库与通知**：发现持久化、统计回填、触发 callback（如有）
+3. **文档抓取**：服务端抓取需求/设计文档链接内容（HTML 转纯文本，单篇截断 2 万字符、合计 6 万字符），失败自动标注并降级为仅链接提示
+4. **确定性预处理**：解析 diff → 过滤二进制/纯删除文件 → 规则路由（Ant 通配 + 花括号展开）→ 文件分组
+5. **Agent 评审**：模型收到「技能提示词 + 命中规则 + 需求/设计文档上下文 + 分组 diff」，可调用 `file_read` / `code_search` 工具读取文件内容与搜索代码（最多 `maxRounds` 轮），最终输出严格 JSON 的发现列表
+6. **行号定位**：模型给出的行号被吸附到该文件真实的新增行上（避免行号漂移）
+7. **反思过滤**（可关）：将全部发现连同 ±5 行代码上下文再交给模型核对，过滤臆测与重复项
+8. **落库与通知**：发现持久化、统计回填、触发 callback（如有）
+
+深度扫描（人工触发）独立于上述流程：克隆全仓 → 符号提取与反向引用 → LLM 影响报告落库。
 
 ## 6. Mock 模式说明
 

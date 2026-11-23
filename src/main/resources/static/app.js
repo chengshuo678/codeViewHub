@@ -471,6 +471,32 @@ const DashboardPage = {
         </div>
       </div>
       <div class="field">
+        <label>仓库地址（可选）</label>
+        <input type="text" v-model="form.repoUrl" placeholder="http://git.example.com/group/project.git 或 file:///本地路径">
+        <div class="hint">供评审详情页【深度扫描】克隆该分支全量代码，做仓库级改动影响分析</div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label>需求文档链接</label>
+          <textarea v-model="form.reqDocs" rows="2" placeholder="每行一个 wiki 链接（最多 5 个）"></textarea>
+        </div>
+        <div class="field">
+          <label>设计文档链接</label>
+          <textarea v-model="form.designDocs" rows="2" placeholder="每行一个 wiki 链接（最多 5 个）"></textarea>
+        </div>
+      </div>
+      <details class="doc-paste">
+        <summary>手动粘贴文档内容（可选，链接抓取失败时的兜底）</summary>
+        <div class="field">
+          <label>需求文档内容</label>
+          <textarea v-model="form.reqDocText" rows="3" placeholder="粘贴需求文档文本，多篇用 ---- 分隔"></textarea>
+        </div>
+        <div class="field">
+          <label>设计文档内容</label>
+          <textarea v-model="form.designDocText" rows="3" placeholder="粘贴设计文档文本，多篇用 ---- 分隔"></textarea>
+        </div>
+      </details>
+      <div class="field">
         <label>Diff 内容 <span class="req">*</span></label>
         <textarea v-model="form.diff" class="mono" rows="12" placeholder="粘贴 git diff 输出，例如：git diff origin/main...HEAD"></textarea>
         <div class="hint">提示：提交时附带完整文件内容可提升评审质量（API 的 files 字段）</div>
@@ -493,7 +519,10 @@ const DashboardPage = {
         const total = ref(0);
         const showSubmit = ref(false);
         const submitting = ref(false);
-        const form = reactive({ repoName: '', branch: '', author: '', diff: '' });
+        const form = reactive({
+            repoName: '', branch: '', author: '', diff: '',
+            repoUrl: '', reqDocs: '', designDocs: '', reqDocText: '', designDocText: '',
+        });
 
         const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
         /** 页码按钮序列（-1 表示省略号），当前页附近 + 首末页 */
@@ -543,12 +572,21 @@ const DashboardPage = {
         function go(id) { location.hash = '#/reviews/' + id; }
         function sevN(s) { return (stats.value && stats.value.bySeverity && stats.value.bySeverity[s]) || 0; }
 
+        function splitLines(s) {
+            return (s || '').split('\n').map(x => x.trim()).filter(Boolean);
+        }
+
         async function submit() {
             submitting.value = true;
             try {
                 const res = await api.post('/api/reviews', {
                     repoName: form.repoName, branch: form.branch || null,
                     author: form.author || null, source: 'MANUAL', diff: form.diff,
+                    repoUrl: form.repoUrl.trim() || null,
+                    requirementDocs: splitLines(form.reqDocs),
+                    designDocs: splitLines(form.designDocs),
+                    requirementDocText: form.reqDocText.trim() || null,
+                    designDocText: form.designDocText.trim() || null,
                 });
                 toast('已提交评审任务 #' + res.id, 'success');
                 showSubmit.value = false;
@@ -619,6 +657,8 @@ const ReviewDetailPage = {
         <div class="d-actions">
           <button class="btn ghost sm" @click="exportJson"><span v-html="IC.export"></span>导出 JSON</button>
           <button class="btn ghost sm" v-if="r.status === 'FAILED'" @click="retry"><span v-html="IC.refresh"></span>重试评审</button>
+          <button class="btn primary sm" v-if="r.status !== 'QUEUED' && r.status !== 'RUNNING' && !scanning"
+                  @click="startDeepScan"><span v-html="IC.search"></span>{{ r.deepScanStatus === 'SUCCESS' ? '重新深度扫描' : '深度扫描' }}</button>
           <button class="btn ghost sm" @click="reload"><span v-html="IC.refresh"></span>刷新</button>
         </div>
       </div>
@@ -631,6 +671,84 @@ const ReviewDetailPage = {
     <div class="banner error" v-if="r.status === 'FAILED' && r.error">
       <span v-html="IC.alert"></span><span>{{ r.error }}</span>
     </div>
+    <div class="banner running" v-if="scanning">
+      <span class="spinner"></span>深度扫描进行中：正在克隆仓库全量代码并分析改动影响面，页面每 3 秒自动刷新…
+    </div>
+    <div class="banner error" v-if="r.deepScanStatus === 'FAILED' && r.deepScanError">
+      <span v-html="IC.alert"></span><span>深度扫描失败：{{ r.deepScanError }}</span>
+    </div>
+
+    <section class="card docs-card" v-if="docReq.length || docDesign.length">
+      <div class="col-head"><h2>参考文档</h2></div>
+      <div class="docs-body">
+        <div class="doc-group" v-if="docReq.length">
+          <span class="doc-kind">需求文档</span>
+          <div class="doc-item" v-for="(d, i) in docReq" :key="'rq' + i">
+            <a v-if="d.url" :href="d.url" target="_blank" rel="noopener" class="doc-link">{{ d.title || d.url }}</a>
+            <span v-else class="doc-link">{{ d.title || '手动粘贴内容' }}</span>
+            <span class="doc-st" :class="docStClass(d)">{{ docStLabel(d) }}</span>
+          </div>
+        </div>
+        <div class="doc-group" v-if="docDesign.length">
+          <span class="doc-kind">设计文档</span>
+          <div class="doc-item" v-for="(d, i) in docDesign" :key="'ds' + i">
+            <a v-if="d.url" :href="d.url" target="_blank" rel="noopener" class="doc-link">{{ d.title || d.url }}</a>
+            <span v-else class="doc-link">{{ d.title || '手动粘贴内容' }}</span>
+            <span class="doc-st" :class="docStClass(d)">{{ docStLabel(d) }}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card scan-card" v-if="scanReport">
+      <div class="col-head">
+        <h2>影响分析 <span class="count">{{ scanReport.changedFiles }} 个变更文件</span></h2>
+        <span class="risk-badge" :class="'risk-' + (scanReport.analysis.overallRisk || 'UNKNOWN')">
+          整体风险 {{ riskLabel(scanReport.analysis.overallRisk) }}
+        </span>
+      </div>
+      <div class="scan-meta" v-if="scanReport.repoUrl">
+        基于 {{ scanReport.repoFiles }} 个仓库文件的静态符号引用分析 + AI 综合评估（{{ fmtTime(scanReport.generatedAt) }}）
+      </div>
+      <div class="scan-summary" v-if="scanReport.analysis.summary">{{ scanReport.analysis.summary }}</div>
+
+      <h3 class="scan-h">受影响模块</h3>
+      <div class="scan-mod" v-for="(m, i) in scanReport.analysis.affectedModules" :key="'sm' + i">
+        <div class="scan-mod-head">
+          <span class="risk-badge" :class="'risk-' + (m.risk || 'MEDIUM')">{{ m.risk || 'MEDIUM' }}</span>
+          <span class="mono scan-mod-file">{{ m.file }}</span>
+        </div>
+        <div class="sym-chips" v-if="m.symbols && m.symbols.length">
+          <span class="sym" v-for="(s, si) in m.symbols" :key="si">{{ s }}</span>
+        </div>
+        <div class="scan-reason" v-if="m.reason">{{ m.reason }}</div>
+      </div>
+      <div v-if="!scanReport.analysis.affectedModules.length" class="empty small">无受影响模块结论</div>
+
+      <h3 class="scan-h" v-if="scanReport.analysis.hiddenRisks.length">隐藏风险</h3>
+      <div class="scan-risk" v-for="(k, i) in scanReport.analysis.hiddenRisks" :key="'sk' + i">
+        <div class="scan-risk-t"><span v-html="IC.alert"></span>{{ k.risk }}</div>
+        <div class="scan-risk-e" v-if="k.evidence">依据：{{ k.evidence }}</div>
+        <div class="scan-risk-s" v-if="k.suggestion">建议：{{ k.suggestion }}</div>
+      </div>
+
+      <h3 class="scan-h" v-if="scanReport.analysis.testSuggestions.length">回归测试建议</h3>
+      <ul class="scan-tests" v-if="scanReport.analysis.testSuggestions.length">
+        <li v-for="(t, i) in scanReport.analysis.testSuggestions" :key="'st' + i">{{ t }}</li>
+      </ul>
+
+      <details class="scan-static">
+        <summary>静态引用命中（{{ scanReport.static.affectedCount }} 个文件引用了变更符号）</summary>
+        <div class="scan-static-item" v-for="(a, i) in scanReport.static.affected" :key="'sa' + i">
+          <span class="mono">{{ a.file }}</span>
+          <span class="sym-chips">
+            <span class="sym" v-for="(s, si) in a.symbols.slice(0, 8)" :key="si">{{ s }}</span>
+          </span>
+          <span class="hits">{{ a.hits }} 处</span>
+        </div>
+        <div v-if="!scanReport.static.affected.length" class="empty small">变更符号未被仓库其他文件直接引用</div>
+      </details>
+    </section>
 
     <div class="detail-grid">
       <section class="findings-col">
@@ -666,8 +784,8 @@ const ReviewDetailPage = {
               <button :class="{ 'on-ignored': f.status === 'IGNORED' }" @click="setStatus(f, 'IGNORED')">忽略</button>
               <button :class="{ 'on-false_positive': f.status === 'FALSE_POSITIVE' }" @click="setStatus(f, 'FALSE_POSITIVE')">误报</button>
             </div>
-            <textarea class="f-remark" v-model="remarks[f.id]" placeholder="添加备注…（失焦保存）"
-                      v-if="r.status !== 'RUNNING'"></textarea>
+            <textarea class="f-remark" v-model="remarks[f.id]" placeholder="添加备注…（失焦自动保存）"
+                      v-if="r.status !== 'RUNNING'" @blur="saveRemark(f)"></textarea>
             <div class="f-time" v-if="f.updatedAt">更新于 {{ fmtTime(f.updatedAt) }}</div>
           </div>
 
@@ -735,6 +853,27 @@ const ReviewDetailPage = {
         </div>
       </section>
     </div>
+
+    <modal v-if="showScanModal" title="启动深度扫描" @close="showScanModal = false">
+      <div class="notice"><span v-html="IC.info"></span>
+        <span>该任务未提供仓库地址。填写 Git 仓库地址后，平台将克隆该分支全部代码做仓库级影响分析（file:// 可用于本地仓库）。</span>
+      </div>
+      <div class="field">
+        <label>仓库地址 <span class="req">*</span></label>
+        <input type="text" v-model="scanForm.repoUrl" placeholder="http://git.example.com/group/project.git 或 file:///本地仓库路径">
+      </div>
+      <div class="field">
+        <label>分支（可选）</label>
+        <input type="text" v-model="scanForm.branch" placeholder="默认克隆仓库默认分支">
+        <div class="hint">留空时使用仓库默认分支；填写后克隆指定分支代码</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" @click="showScanModal = false">取消</button>
+        <button class="btn primary" :disabled="scanStarting || !scanForm.repoUrl" @click="doDeepScan">
+          {{ scanStarting ? '启动中…' : '开始深度扫描' }}
+        </button>
+      </div>
+    </modal>
   </div>
   <div v-else class="page"><div class="empty"><div class="empty-ic spinner"></div><h4>加载中…</h4></div></div>`,
     setup() {
@@ -769,6 +908,44 @@ const ReviewDetailPage = {
         });
 
         const isActive = computed(() => r.value && (r.value.status === 'QUEUED' || r.value.status === 'RUNNING'));
+        const scanning = computed(() => r.value && (r.value.deepScanStatus === 'QUEUED' || r.value.deepScanStatus === 'RUNNING'));
+        const scanReport = computed(() => {
+            if (!r.value || !r.value.deepScanReport) return null;
+            try {
+                const o = JSON.parse(r.value.deepScanReport);
+                o.analysis = o.analysis || {};
+                o.analysis.summary = o.analysis.summary || '';
+                o.analysis.affectedModules = o.analysis.affectedModules || [];
+                o.analysis.hiddenRisks = o.analysis.hiddenRisks || [];
+                o.analysis.testSuggestions = o.analysis.testSuggestions || [];
+                o.static = o.static || {};
+                o.static.affected = o.static.affected || [];
+                o.static.affectedCount = o.static.affectedCount || o.static.affected.length;
+                o.repoFiles = o.repoFiles || 0;
+                o.changedFiles = o.changedFiles || 0;
+                return o;
+            } catch (e) { return null; }
+        });
+
+        /** 参考文档（优先取引擎回写的 docsInfo；评审未完成时展示链接与「待抓取」） */
+        const docReq = computed(() => docsOf('requirement'));
+        const docDesign = computed(() => docsOf('design'));
+        function docsOf(kind) {
+            if (!r.value) return [];
+            let infos = [];
+            try { infos = (JSON.parse(r.value.docsInfo || '{}')[kind] || []); } catch (e) { /* ignore */ }
+            if (infos.length) return infos;
+            // docsInfo 为空：任务仍在排队/评审中，或无文档
+            return (r.value[kind === 'requirement' ? 'requirementDocs' : 'designDocs'] || [])
+                .map(u => ({ url: u, title: u, status: 'PENDING' }));
+        }
+        function docStClass(d) { return d.status === 'OK' ? 'ok' : (d.status === 'FAIL' ? 'bad' : 'wait'); }
+        function docStLabel(d) {
+            if (d.status === 'OK') return '已注入 ' + d.chars + ' 字';
+            if (d.status === 'FAIL') return '抓取失败' + (d.error ? '：' + d.error : '');
+            return '待抓取';
+        }
+        function riskLabel(v) { return v === 'HIGH' ? '高' : v === 'MEDIUM' ? '中' : v === 'LOW' ? '低' : '未知'; }
         const duration = computed(() => r.value ? fmtDur(r.value.startedAt, r.value.finishedAt) : null);
         const scoreColor = computed(() => {
             const s = r.value ? r.value.score : null;
@@ -893,6 +1070,34 @@ const ReviewDetailPage = {
                 load();
             } catch (e) { toast(e.message); }
         }
+
+        // ---- 深度扫描 ----
+        const showScanModal = ref(false);
+        const scanStarting = ref(false);
+        const scanForm = reactive({ repoUrl: '', branch: '' });
+        function startDeepScan() {
+            if (!r.value.repoUrl) {
+                scanForm.repoUrl = '';
+                scanForm.branch = r.value.branch || '';
+                showScanModal.value = true;
+                return;
+            }
+            doDeepScan();
+        }
+        async function doDeepScan() {
+            scanStarting.value = true;
+            try {
+                const body = {};
+                if (scanForm.repoUrl.trim()) body.repoUrl = scanForm.repoUrl.trim();
+                if (scanForm.branch.trim()) body.branch = scanForm.branch.trim();
+                const res = await api.post('/api/reviews/' + idRef.value + '/deep-scan', body);
+                toast('深度扫描已启动（克隆仓库 + 影响分析）', 'success');
+                showScanModal.value = false;
+                load();
+            } catch (e) { toast(e.message); } finally {
+                scanStarting.value = false;
+            }
+        }
         function reload() { load(); }
 
         function exportJson() {
@@ -907,13 +1112,15 @@ const ReviewDetailPage = {
         let timer = null;
         onMounted(() => {
             load();
-            timer = setInterval(() => { if (isActive.value) load(); }, 3000);
+            timer = setInterval(() => { if (isActive.value || scanning.value) load(); }, 3000);
         });
         onUnmounted(() => clearInterval(timer));
         watch(idRef, () => { r.value = null; diffFiles.value = []; load(); });
 
         return {
-            r, remarks, fSev, fStatus, openMap, diffFiles, filtered, isActive, duration,
+            r, remarks, fSev, fStatus, openMap, diffFiles, filtered, isActive, scanning, scanReport, duration,
+            docReq, docDesign, docStClass, docStLabel, riskLabel,
+            showScanModal, scanStarting, scanForm, startDeepScan, doDeepScan,
             scoreColor, ringDash, IC: I, ST_LABEL, SRC_LABEL, SEV_ORDER, SEV_LABEL, FS_LABEL,
             fmtTime, flatLines, toggleFile, markerCount, markerTitle, scrollToLine, scrollToFindings,
             setStatus, saveRemark, retry, reload, exportJson, diffMode, setDiffMode, splitRows,
@@ -1276,6 +1483,25 @@ const SettingsPage = {
           </div>
           <button class="btn primary" @click="saveSec">保存安全配置</button>
         </section>
+
+        <section class="card settings-section">
+          <h2><span v-html="IC.branch"></span>仓库访问</h2>
+          <p class="sec-sub">深度扫描克隆 http(s) 代码仓库所用的凭据；file:// 本地仓库无需配置</p>
+          <div class="field">
+            <label>Git 用户名</label>
+            <input type="text" v-model="git.user" placeholder="例如 oauth2 / 域账号（GitLab 令牌填对应用户名）">
+          </div>
+          <div class="field">
+            <label>Git 密码 / 访问令牌
+              <span v-if="orig.gitPasswordSet" class="key-set">已配置</span>
+            </label>
+            <div style="display:flex;gap:8px">
+              <input type="password" v-model="git.password" placeholder="留空表示不修改" autocomplete="new-password">
+              <button class="btn ghost sm" v-if="orig.gitPasswordSet" @click="clearGitKey">清除</button>
+            </div>
+          </div>
+          <button class="btn primary" @click="saveGit">保存仓库访问配置</button>
+        </section>
       </div>
     </div>
   </div>`,
@@ -1283,7 +1509,8 @@ const SettingsPage = {
         const llm = reactive({ provider: 'mock', baseUrl: '', apiKey: '', model: '', temperature: '0.1' });
         const engine = reactive({ maxRounds: 6, groupMaxLines: 600, reflection: true, gateSeverity: 'CRITICAL' });
         const sec = reactive({ hubApiKey: '' });
-        const orig = reactive({ apiKeySet: false, hubApiKeySet: false });
+        const git = reactive({ user: '', password: '' });
+        const orig = reactive({ apiKeySet: false, hubApiKeySet: false, gitPasswordSet: false });
         const testing = ref(false);
         const testRes = ref(null);
 
@@ -1294,6 +1521,7 @@ const SettingsPage = {
                 engine.maxRounds = v.maxRounds; engine.groupMaxLines = v.groupMaxLines;
                 engine.reflection = v.reflection; engine.gateSeverity = v.gateSeverity;
                 orig.apiKeySet = v.apiKeySet; orig.hubApiKeySet = v.hubApiKeySet;
+                git.user = v.gitUser || ''; orig.gitPasswordSet = v.gitPasswordSet;
             } catch (e) { toast(e.message); }
         }
         async function saveLlm() {
@@ -1329,6 +1557,19 @@ const SettingsPage = {
         async function clearHubKey() {
             try { await api.del('/api/settings/hub-api-key'); toast('已清除接入密钥', 'success'); load(); } catch (e) { toast(e.message); }
         }
+        async function saveGit() {
+            try {
+                const body = { gitUser: git.user };
+                if (git.password) body.gitPassword = git.password;
+                await api.put('/api/settings', body);
+                git.password = '';
+                toast('仓库访问配置已保存', 'success');
+                load();
+            } catch (e) { toast(e.message); }
+        }
+        async function clearGitKey() {
+            try { await api.del('/api/settings/git-password'); toast('已清除 Git 凭据', 'success'); load(); } catch (e) { toast(e.message); }
+        }
         async function testLlm() {
             testing.value = true;
             testRes.value = null;
@@ -1344,7 +1585,8 @@ const SettingsPage = {
             }
         }
         onMounted(load);
-        return { llm, engine, sec, orig, testing, testRes, saveLlm, saveEngine, saveSec, clearLlmKey, clearHubKey, testLlm, IC: I };
+        return { llm, engine, sec, git, orig, testing, testRes, saveLlm, saveEngine, saveSec, saveGit,
+            clearLlmKey, clearHubKey, clearGitKey, testLlm, IC: I };
     },
 };
 

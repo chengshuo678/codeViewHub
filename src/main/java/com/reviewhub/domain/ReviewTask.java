@@ -62,6 +62,54 @@ public class ReviewTask {
     @Column(length = 500)
     private String callbackUrl;
 
+    // ---- 参考文档（需求 / 设计 wiki 链接，JSON 数组） ----
+
+    /** 需求文档链接列表，JSON：["http://wiki/req1", ...] */
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String requirementDocs;
+
+    /** 设计文档链接列表，JSON：["http://wiki/design1", ...] */
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String designDocs;
+
+    /** 需求文档内容（链接抓取失败时的手动粘贴兜底） */
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String requirementDocText;
+
+    /** 设计文档内容（手动粘贴兜底） */
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String designDocText;
+
+    /** 文档抓取结果信息（引擎评审时回写）：{"requirement":[{url,title,status,chars,error}],"design":[...]} */
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String docsInfo;
+
+    /** 仓库地址（http(s) 或 file:// ，深度扫描克隆用） */
+    @Column(length = 500)
+    private String repoUrl;
+
+    // ---- 深度扫描（仓库级改动影响分析） ----
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private DeepScanStatus deepScanStatus = DeepScanStatus.NONE;
+
+    /** 影响分析报告 JSON */
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String deepScanReport;
+
+    @Column(length = 2000)
+    private String deepScanError;
+
+    private LocalDateTime deepScanStartedAt;
+    private LocalDateTime deepScanFinishedAt;
+
     // ---- 完成时回填的统计（按严重级别的问题数） ----
     private Integer cntBlocker = 0;
     private Integer cntCritical = 0;
@@ -126,6 +174,39 @@ public class ReviewTask {
 
     public String getCallbackUrl() { return callbackUrl; }
     public void setCallbackUrl(String callbackUrl) { this.callbackUrl = callbackUrl; }
+
+    public String getRequirementDocs() { return requirementDocs; }
+    public void setRequirementDocs(String requirementDocs) { this.requirementDocs = requirementDocs; }
+
+    public String getDesignDocs() { return designDocs; }
+    public void setDesignDocs(String designDocs) { this.designDocs = designDocs; }
+
+    public String getRequirementDocText() { return requirementDocText; }
+    public void setRequirementDocText(String requirementDocText) { this.requirementDocText = requirementDocText; }
+
+    public String getDesignDocText() { return designDocText; }
+    public void setDesignDocText(String designDocText) { this.designDocText = designDocText; }
+
+    public String getDocsInfo() { return docsInfo; }
+    public void setDocsInfo(String docsInfo) { this.docsInfo = docsInfo; }
+
+    public String getRepoUrl() { return repoUrl; }
+    public void setRepoUrl(String repoUrl) { this.repoUrl = repoUrl; }
+
+    public DeepScanStatus getDeepScanStatus() { return deepScanStatus; }
+    public void setDeepScanStatus(DeepScanStatus deepScanStatus) { this.deepScanStatus = deepScanStatus; }
+
+    public String getDeepScanReport() { return deepScanReport; }
+    public void setDeepScanReport(String deepScanReport) { this.deepScanReport = deepScanReport; }
+
+    public String getDeepScanError() { return deepScanError; }
+    public void setDeepScanError(String deepScanError) { this.deepScanError = deepScanError; }
+
+    public LocalDateTime getDeepScanStartedAt() { return deepScanStartedAt; }
+    public void setDeepScanStartedAt(LocalDateTime deepScanStartedAt) { this.deepScanStartedAt = deepScanStartedAt; }
+
+    public LocalDateTime getDeepScanFinishedAt() { return deepScanFinishedAt; }
+    public void setDeepScanFinishedAt(LocalDateTime deepScanFinishedAt) { this.deepScanFinishedAt = deepScanFinishedAt; }
 
     public Integer getCntBlocker() { return cntBlocker; }
     public void setCntBlocker(Integer cntBlocker) { this.cntBlocker = cntBlocker; }

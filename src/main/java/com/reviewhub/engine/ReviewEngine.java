@@ -66,8 +66,8 @@ public class ReviewEngine {
         this.skillRepo = skillRepo;
     }
 
-    /** 执行一次完整评审（同步，由队列 worker 调用） */
-    public EngineResult review(ReviewTask task) {
+    /** 执行一次完整评审（同步，由队列 worker 调用）。docsContext 为需求/设计文档上下文（可为空） */
+    public EngineResult review(ReviewTask task, String docsContext) {
         Map<String, String> bundle = parseBundle(task.getFilesBundle());
         List<DiffFile> all = diffParser.parse(task.getDiffText());
         List<ReviewRule> enabledRules = ruleRepo.findByEnabledTrueOrderById();
@@ -93,7 +93,7 @@ public class ReviewEngine {
 
         for (List<DiffFile> group : groupFiles(reviewable)) {
             try {
-                GroupResult gr = reviewGroup(task, group, enabledRules, skill, bundle);
+                GroupResult gr = reviewGroup(task, group, enabledRules, skill, bundle, docsContext);
                 for (RawFinding rf : gr.findings()) {
                     findings.add(new RawFinding(rf.file(), clampLine(rf.file(), rf.line(), all),
                             rf.severity(), rf.rule(), rf.message(), rf.suggestion()));
@@ -129,13 +129,13 @@ public class ReviewEngine {
 
     private GroupResult reviewGroup(ReviewTask task, List<DiffFile> group,
                                     List<ReviewRule> enabledRules, ReviewSkill skill,
-                                    Map<String, String> bundle) {
+                                    Map<String, String> bundle, String docsContext) {
         Set<ReviewRule> matched = new LinkedHashSet<>();
         for (DiffFile f : group) matched.addAll(ruleMatcher.match(enabledRules, f));
 
         List<LlmModels.LlmMessage> messages = new ArrayList<>();
         messages.add(LlmModels.LlmMessage.system(buildSystemPrompt(skill, matched)));
-        messages.add(LlmModels.LlmMessage.user(buildUserPrompt(task, group, bundle)));
+        messages.add(LlmModels.LlmMessage.user(buildUserPrompt(task, group, bundle, docsContext)));
 
         int maxRounds = settings.getInt("review.maxRounds", 6);
         String lastContent = null;
@@ -243,12 +243,16 @@ public class ReviewEngine {
         return sb.toString();
     }
 
-    private String buildUserPrompt(ReviewTask task, List<DiffFile> group, Map<String, String> bundle) {
+    private String buildUserPrompt(ReviewTask task, List<DiffFile> group, Map<String, String> bundle,
+                                   String docsContext) {
         StringBuilder sb = new StringBuilder();
         sb.append("## 仓库信息\n仓库：").append(nz(task.getRepoName()));
         if (notBlank(task.getBranch())) sb.append("　分支：").append(task.getBranch());
         if (notBlank(task.getAuthor())) sb.append("　作者：").append(task.getAuthor());
         sb.append("\n\n");
+        if (notBlank(docsContext)) {
+            sb.append(docsContext).append('\n');
+        }
         sb.append("## file_read 可读取的文件\n");
         if (bundle.isEmpty()) {
             sb.append("（提交方未提供文件内容包，请仅依据 diff 评审）\n");

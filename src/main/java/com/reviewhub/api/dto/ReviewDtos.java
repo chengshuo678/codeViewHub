@@ -21,7 +21,12 @@ public final class ReviewDtos {
             Map<String, String> files,
             @Size(max = 200) String jenkinsJob,
             @Size(max = 50) String jenkinsBuild,
-            @Size(max = 500) String callbackUrl) {
+            @Size(max = 500) String callbackUrl,
+            java.util.List<String> requirementDocs,
+            java.util.List<String> designDocs,
+            String requirementDocText,
+            String designDocText,
+            @Size(max = 500) String repoUrl) {
     }
 
     public record SubmitResponse(Long id, String status) {
@@ -40,7 +45,22 @@ public final class ReviewDtos {
             Integer cntBlocker, Integer cntCritical, Integer cntMajor, Integer cntMinor, Integer cntInfo,
             String createdAt, String startedAt, String finishedAt,
             Integer queueDepth,
-            java.util.List<FindingDto> findings) {
+            java.util.List<FindingDto> findings,
+            String repoUrl,
+            java.util.List<String> requirementDocs, java.util.List<String> designDocs,
+            String docsInfo,
+            String deepScanStatus, String deepScanReport, String deepScanError,
+            String deepScanStartedAt, String deepScanFinishedAt) {
+    }
+
+    /** 深度扫描触发请求（repoUrl 缺省时用于补填） */
+    public record DeepScanRequest(
+            @Size(max = 500) String repoUrl,
+            @Size(max = 200) String branch) {
+    }
+
+    /** 深度扫描触发响应 */
+    public record DeepScanResponse(String deepScanStatus) {
     }
 
     public record ReviewListItem(
