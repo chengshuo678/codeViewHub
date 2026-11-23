@@ -41,6 +41,7 @@ echo "==> [1/4] Maven 构建..."
 # ---- 2. 检查 lib 下的 AArch64 JDK ----
 JDK_DIR=""
 for d in "$APP_DIR"/lib/jdk-*/; do
+    [ -L "${d%/}" ] && continue    # 跳过软链（本地开发机辅助 JDK，不进部署包）
     [ -x "$d/bin/java" ] && JDK_DIR="${d%/}" && break
 done
 if [ -z "$JDK_DIR" ]; then

@@ -242,12 +242,15 @@ cd code-review-hub-linux-aarch64
 |----------|------|
 | 覆盖端口/并发 | `SERVER_PORT=9090 REVIEW_WORKERS=4 ./start.sh` |
 | 调整 JVM 内存 | `JAVA_OPTS="-Xms1g -Xmx2g" ./start.sh` |
+| 指定本地 JDK | `JAVA_HOME=/path/to/jdk17 ./start.sh`（优先级最高） |
 | 查看日志 | `tail -f logs/app.log` |
 | 重启 | `./stop.sh && ./start.sh` |
 
 - 首次启动自动创建 admin/admin123，登录后立即修改密码
 - 目录说明：`data/`（H2 数据库，升级保留即数据不丢）、`logs/app.log`（运行日志）、`app.pid`（进程号）
 - 升级版本：用新包中的 `code-review-hub.jar` 替换旧文件后重启即可
+
+> **JDK 选择规则**：`start.sh` 会按顺序探测并选用第一个「能真正执行且版本 ≥17」的 Java——`JAVA_HOME` → 部署包内置 `lib/jdk-*`（Linux aarch64，仅适用于 Linux ARM 服务器）→ 系统 PATH 中的 `java` → macOS 标准安装位置（`/Library/Java/JavaVirtualMachines` 等）。内置 JDK 在 macOS/Windows 等非 Linux-ARM 宿主机上会自动跳过（此前直接报 `cannot execute binary file`），例如在本地 Mac 开发机上运行部署目录时，可通过 `JAVA_HOME` 指向本地 JDK 17，或在 `lib/` 下放一个指向本地 JDK 的软链（`package.sh` 打包时会自动跳过软链，不会混入内网部署包）。
 
 ## 5. 配置项说明
 
