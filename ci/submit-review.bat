@@ -26,6 +26,7 @@ rem   Jenkins:     bat 'ci\\submit-review.bat --hub ... --base origin/master --w
 rem   WSL:         建议改用 sh 版：bash ci/submit-review.sh ...
 rem
 rem 说明: diff 与附带全文自动排除 pdf/word 等二进制文档（后缀清单见脚本内 EXCLUDE_EXTS）
+rem       基线引用本地不存在时自动从远端补拉（适配浅克隆/单分支克隆流水线），拉不到则显式报错
 rem
 rem 退出码: 0=评审通过(门禁放行)  1=门禁拦截或评审失败  2=参数/环境错误
 rem 依赖: git、python 3.6+（无需 curl）
@@ -114,6 +115,13 @@ def git(*git_args):
     return r.stdout.decode("utf-8", "replace")
 
 
+def git_full(*git_args):
+    """返回 (stdout, 退出码, stderr)——需要区分「命令失败」与「无变更」时使用"""
+    r = subprocess.run(["git"] + list(git_args), capture_output=True)
+    return (r.stdout.decode("utf-8", "replace"), r.returncode,
+            r.stderr.decode("utf-8", "replace"))
+
+
 author = author or git("config", "user.name").strip() or "unknown"
 branch = git("rev-parse", "--abbrev-ref", "HEAD").strip() or "HEAD"
 commit = git("rev-parse", "--short=12", "HEAD").strip()
@@ -123,10 +131,32 @@ EXCLUDE_EXTS = "pdf doc docx docm rtf wps xls xlsx xlsm ppt pptx".split()
 EXCLUDE_SPEC = [":(exclude,icase)*." + e for e in EXCLUDE_EXTS]
 
 # ---------- 2. 生成 diff ----------
-diff = git("diff", base + "...HEAD", "--", ".", *EXCLUDE_SPEC)
+# 基线引用可能不在本地（浅克隆/单分支克隆的流水线常见），先尝试从远端补拉
+_, rc, _ = git_full("rev-parse", "--verify", "-q", base + "^{commit}")
+if rc != 0:
+    remote_name, base_branch = "origin", base
+    if "/" in base:
+        remote_name, base_branch = base.split("/", 1)
+    if subprocess.run(["git", "config", "remote.%s.url" % remote_name],
+                      capture_output=True).returncode != 0:
+        remote_name = "origin"
+    print("[review] 本地缺少基线引用 %s，尝试 git fetch %s %s ..." % (base, remote_name, base_branch))
+    _, frc, _ = git_full("fetch", remote_name, base_branch)
+    if frc == 0:
+        # git ≥ 1.8.4 会顺带更新远端跟踪分支；更旧版本退回 FETCH_HEAD
+        _, rc, _ = git_full("rev-parse", "--verify", "-q", base + "^{commit}")
+        if rc != 0:
+            base = "FETCH_HEAD"
+
+diff, rc1, err1 = git_full("diff", base + "...HEAD", "--", ".", *EXCLUDE_SPEC)
 if not diff:
-    diff = git("diff", base, "--", ".", *EXCLUDE_SPEC)
+    diff, rc2, err2 = git_full("diff", base, "--", ".", *EXCLUDE_SPEC)
 if not diff:
+    if rc1 != 0 and rc2 != 0:
+        print("[review] 生成 diff 失败（base: %s）:" % base)
+        for line in (err2 or err1).strip().splitlines()[-5:]:
+            print("    " + line)
+        sys.exit(2)
     print("[review] 没有检测到代码变更（base: %s），跳过评审" % base)
     sys.exit(0)
 print("[review] 仓库=%s 分支=%s 提交=%s diff=%d 行" % (repo, branch, commit, diff.count("\n")))

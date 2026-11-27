@@ -17,6 +17,7 @@
 #     [--design-docs "url1,url2"] # 设计文档 wiki 链接（逗号分隔，最多 5 个）
 #
 # 说明: diff 与附带全文自动排除 pdf/word 等二进制文档（后缀清单见脚本内 EXCLUDE_EXTS）
+#       基线引用本地不存在时自动从远端补拉（适配浅克隆/单分支克隆流水线），拉不到则显式报错
 #
 # 退出码: 0=评审通过(门禁放行)  1=门禁拦截或评审失败  2=参数/环境错误
 # 依赖: bash 4+、git、curl、python3
@@ -53,17 +54,42 @@ COMMIT=$(git rev-parse --short=12 HEAD 2>/dev/null || echo "")
 # 不参与评审的二进制文档后缀（diff 生成与附带全文均过滤，大小写不敏感，可按需增删）
 EXCLUDE_EXTS="pdf doc docx docm rtf wps xls xlsx xlsm ppt pptx"
 EXCLUDE_SPEC=()
-for _ext in ${EXCLUDE_EXTS}; do
-  EXCLUDE_SPEC+=(":(exclude,icase)*.${_ext}")
-done
+EXCLUDE_JOINED=""
+if git diff HEAD -- ':(exclude,icase)*.pdf' >/dev/null 2>&1; then
+  for _ext in ${EXCLUDE_EXTS}; do
+    EXCLUDE_SPEC+=(":(exclude,icase)*.${_ext}")
+  done
+  EXCLUDE_JOINED="${EXCLUDE_SPEC[*]}"
+fi
+# 旧版 git 不支持 :(exclude,icase) 语法时数组留空（降级为不过滤，不中断评审）
+# 注意：bash 4.3- 在 set -u 下展开空数组会报 unbound variable，故用 ${a[@]+...} 写法
 
 # ---------- 1. 生成 diff ----------
-DIFF=$(git diff "${BASE}...HEAD" -- . "${EXCLUDE_SPEC[@]}" 2>/dev/null)
+DIFF_ERR=$(mktemp /tmp/review-diff-err.XXXXXX)
+# 基线引用可能不在本地（浅克隆/单分支克隆的流水线常见），先尝试从远端补拉
+if ! git rev-parse --verify -q "${BASE}^{commit}" >/dev/null 2>&1; then
+  remote_name="origin"; base_branch="${BASE}"
+  case "${BASE}" in */*) remote_name="${BASE%%/*}"; base_branch="${BASE#*/}" ;; esac
+  git config "remote.${remote_name}.url" >/dev/null 2>&1 || remote_name="origin"
+  echo "[review] 本地缺少基线引用 ${BASE}，尝试 git fetch ${remote_name} ${base_branch} ..."
+  if git fetch "${remote_name}" "${base_branch}" >/dev/null 2>&1; then
+    # git ≥ 1.8.4 会顺带更新远端跟踪分支；更旧版本退回 FETCH_HEAD
+    git rev-parse --verify -q "${BASE}^{commit}" >/dev/null 2>&1 || BASE="FETCH_HEAD"
+  fi
+fi
+DIFF=$(git diff "${BASE}...HEAD" -- . ${EXCLUDE_SPEC[@]+"${EXCLUDE_SPEC[@]}"} 2>"$DIFF_ERR"); rc1=$?
 if [[ -z "$DIFF" ]]; then
-  DIFF=$(git diff "${BASE}" -- . "${EXCLUDE_SPEC[@]}" 2>/dev/null)
+  DIFF=$(git diff "${BASE}" -- . ${EXCLUDE_SPEC[@]+"${EXCLUDE_SPEC[@]}"} 2>>"$DIFF_ERR"); rc2=$?
 fi
 if [[ -z "$DIFF" ]]; then
+  if [[ "${rc1}" -ne 0 && "${rc2:-1}" -ne 0 ]]; then
+    echo "[review] 生成 diff 失败（base: ${BASE}）:"
+    tail -n 5 "$DIFF_ERR" | sed 's/^/    /'
+    rm -f "$DIFF_ERR"
+    exit 2
+  fi
   echo "[review] 没有检测到代码变更（base: ${BASE}），跳过评审"
+  rm -f "$DIFF_ERR"
   exit 0
 fi
 DIFF_LINES=$(printf '%s' "$DIFF" | wc -l | tr -d ' ')
@@ -72,9 +98,9 @@ echo "[review] 仓库=${REPO} 分支=${BRANCH} 提交=${COMMIT} diff=${DIFF_LINE
 # ---------- 2. 组装 JSON 并提交（借助 python 做安全转义） ----------
 REQ_FILE=$(mktemp /tmp/review-req.XXXXXX.json)
 DIFF_FILE=$(mktemp /tmp/review-diff.XXXXXX)
-trap 'rm -f "$REQ_FILE" "$DIFF_FILE"' EXIT
+trap 'rm -f "$REQ_FILE" "$DIFF_FILE" "$DIFF_ERR"' EXIT
 printf '%s' "$DIFF" > "$DIFF_FILE"
-"$PY" - "$REQ_FILE" "$DIFF_FILE" "$REPO" "$BRANCH" "$COMMIT" "$AUTHOR" "$WITH_FILES" "$BASE" "${EXCLUDE_SPEC[*]}" \
+"$PY" - "$REQ_FILE" "$DIFF_FILE" "$REPO" "$BRANCH" "$COMMIT" "$AUTHOR" "$WITH_FILES" "$BASE" "$EXCLUDE_JOINED" \
      "$REPO_URL" "$REQ_DOCS" "$DESIGN_DOCS" <<'PYEOF'
 import json, subprocess, sys
 
